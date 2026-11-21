@@ -3,6 +3,8 @@ project(tangram_cpp CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(tgcore src/adf.cpp src/image.cpp src/scale_filter.cpp)
+find_package(Threads REQUIRED)   # the antialiasing filter splits rows over threads
+target_link_libraries(tgcore Threads::Threads)
 add_executable(test_scale tests/test_scale.cpp)
 target_link_libraries(test_scale tgcore)
 add_test(NAME scale COMMAND test_scale)
@@ -88,6 +90,10 @@ if(WIN32)
   else()
     set_target_properties(tangram PROPERTIES OUTPUT_NAME "Tangram_x86")
   endif()
+  # builds made before the rename left tangram.exe (and its .pdb/.ilk) in the same folder; CMake never deletes old files, so do it here
+  add_custom_command(TARGET tangram POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -f "$<TARGET_FILE_DIR:tangram>/tangram.exe" "$<TARGET_FILE_DIR:tangram>/tangram.pdb" "$<TARGET_FILE_DIR:tangram>/tangram.ilk"
+    VERBATIM)
 else()
   find_package(X11)
   if(X11_FOUND)

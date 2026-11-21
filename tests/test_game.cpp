@@ -128,19 +128,24 @@ int main(int argc, char** argv) {
         CHECK(label0 > 50 && inkCount(232, 151, 290, 158) == label0);
         CHECK(inkCount(242, 162, 284, 169) > code0 + 20);
     }
-    {   // music: starts unmuted (25%), M mutes, M again restores; F1..F5 normal-stage music, F6..F10 bonus-stage music
+    {   // music (0x1005fc / 0x100612): song 1 from start-up; M and F2 work only during a stage: M stops / restarts, F2 switches songs
         Game gs; CHECK(gs.init(adf, err, false));
-        CHECK(!gs.musicMuted() && gs.musicOverride() == 0);
-        Event m; m.type = Event::Key; m.key = 'M';
-        gs.event(m); CHECK(gs.musicMuted()); gs.event(m); CHECK(!gs.musicMuted());
+        CHECK(!gs.musicMuted() && gs.musicSong() == 1);
         int16_t buf[2 * 2000];
         gs.audio(buf, 2000); CHECK(gs.song() == 1);
-        Event f; f.type = Event::Key; f.key = kKeyF1 + 1;   // F2 toggles the song, cyclically
-        gs.event(f); gs.audio(buf, 2000); CHECK(gs.musicOverride() == 2 && gs.song() == 2);
-        gs.event(f); gs.audio(buf, 2000); CHECK(gs.musicOverride() == 1 && gs.song() == 1);
-        gs.event(f); CHECK(gs.musicOverride() == 2);
+        Event m; m.type = Event::Key; m.key = 'M';
+        Event f; f.type = Event::Key; f.key = kKeyF1 + 1;
+        gs.event(m); gs.event(f); CHECK(!gs.musicMuted() && gs.musicSong() == 1);   // on the menu: nothing
+        Game gp; CHECK(gp.init(adf, err, false));
+        Event en0; en0.type = Event::Key; en0.key = kKeyEnter; gp.event(en0); settle(gp);
+        gp.audio(buf, 2000); CHECK(gp.song() == 1);
+        gp.event(m); gp.audio(buf, 2000); CHECK(gp.musicMuted() && gp.song() == 0);
+        gp.event(m); gp.audio(buf, 2000); CHECK(!gp.musicMuted() && gp.song() == 1);
+        gp.event(f); gp.audio(buf, 2000); CHECK(gp.musicSong() == 2 && gp.song() == 2);
+        gp.event(f); gp.audio(buf, 2000); CHECK(gp.musicSong() == 1 && gp.song() == 1);
+        gp.startBonusStage(2); gp.audio(buf, 2000); CHECK(gp.song() == 2);   // the bonus stage plays song 2 (user's wish; not in the original code)
         for (int k : {0, 2, 3, 4, 5, 6, 7, 8, 9}) { Event o; o.type = Event::Key; o.key = kKeyF1 + k; gs.event(o); }   // other F keys do nothing
-        CHECK(gs.musicOverride() == 2);
+        CHECK(gs.musicSong() == 1);
         CHECK(!gs.quitRequested());
         Event esc; esc.type = Event::Key; esc.key = kKeyEsc; gs.event(esc);   // Esc on the menu quits
         CHECK(gs.quitRequested());
@@ -339,14 +344,6 @@ int main(int argc, char** argv) {
         gb.startBonusStage(12);
         CHECK(gb.bonusLayout() == 14 && gb.bonusPairsLeft() > 0);
         for (int i = 0; i < 100; i++) if (gb.bonusIcon(i)) { const int r = i / 10, c = i % 10; if (r > 0 && r < 9 && c > 0 && c < 9 && gb.bonusIcon(i - 1) && gb.bonusIcon(i + 1) && gb.bonusIcon(i - 10) && gb.bonusIcon(i + 10)) CHECK(!gb.bonusFree(i)); }
-        {   // test key B: during a stage it starts the next bonus stage at once, during a bonus stage it moves on to the next layout (13..32, then stays 32)
-            Game gk; CHECK(gk.init(adf, err, false));
-            Event en0; en0.type = Event::Key; en0.key = kKeyEnter; gk.event(en0); settle(gk);
-            Event kb; kb.type = Event::Key; kb.key = 'B';
-            gk.event(kb); CHECK(gk.mode() == Game::Mode::Bonus && gk.bonusLayout() == 13);
-            for (int n = 14; n <= 32; n++) { gk.event(kb); CHECK(gk.bonusLayout() == n); }
-            gk.event(kb); CHECK(gk.bonusLayout() == 32);
-        }
         // time limit: 101 ticks of 51 frames
         Game gt; CHECK(gt.init(adf, err, false)); gt.startBonusStage(21);
         for (int i = 0; i < 25 + 101 * 51 - 2; i++) gt.step();
@@ -448,6 +445,48 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 130 * gs.stageTick() && gs.mode() == Game::Mode::Play; i++) gs.step();
             CHECK(gs.mode() == Game::Mode::AskDisk);
         }
+    }
+    {   // two players, time out with too few points (0x1040ee): the player who drops out sees the table, then the other one goes on alone on the next stage
+        Game g2; CHECK(g2.init(adf, err, false));
+        click(g2, 240, 129);   // 2PLAYER
+        Event en0; en0.type = Event::Key; en0.key = kKeyEnter; g2.event(en0); settle(g2);
+        CHECK(g2.player() == 1 && g2.level() == 1);
+        for (int i = 0; i < 130 * g2.stageTick() && g2.mode() == Game::Mode::Play; i++) g2.step();
+        CHECK(g2.mode() == Game::Mode::AskDisk);   // first game end of the session: the score disk question
+        for (int i = 0; i < 3; i++) g2.step();
+        click(g2, 130, 108);   // NO -> the table
+        CHECK(g2.mode() == Game::Mode::HighScores);
+        click(g2, 100, 100);
+        for (int i = 0; i < 200 && g2.mode() == Game::Mode::HighScores; i++) g2.step();
+        CHECK(g2.mode() == Game::Mode::Play && g2.level() == 2 && g2.player() == 1);
+        // the next game end in this session: no question any more, straight to the table (checked in the simulator)
+        Event esc; esc.type = Event::Key; esc.key = kKeyEsc;
+        for (int i = 0; i < 30; i++) g2.step();
+        g2.event(esc);
+        CHECK(g2.mode() == Game::Mode::HighScores);
+    }
+    {   // a placed piece can be picked up on every pixel it covers, also the bottom corner of the square (diamond)
+        Game gq; CHECK(gq.init(adf, err, false));
+        Event en0; en0.type = Event::Key; en0.key = kKeyEnter; gq.event(en0); settle(gq);
+        press(gq, kTray[1][0], kTray[1][1]); release(gq, 100, 100);   // square: corners (100,80) (120,100) (100,120) (80,100)
+        CHECK(gq.placedCount() == 1);
+        press(gq, 100, 120); CHECK(gq.heldPiece() == 1 && gq.placedCount() == 0);
+        release(gq, 100, 100);
+        press(gq, 120, 100); CHECK(gq.heldPiece() == 1);   // right corner
+        release(gq, 100, 100);
+    }
+    {   // the parallelogram on the tray can be taken by its bottom corner (y 141..148)
+        Game gt; CHECK(gt.init(adf, err, false));
+        Event en0; en0.type = Event::Key; en0.key = kKeyEnter; gt.event(en0); settle(gt);
+        press(gt, 297, 146); CHECK(gt.heldPiece() == 4);
+    }
+    {   // 0x10242a: a piece sticking out of x 6..221 / y 6..193 is not put down (here it goes back to the tray)
+        Game gb; CHECK(gb.init(adf, err, false));
+        Event en0; en0.type = Event::Key; en0.key = kKeyEnter; gb.event(en0); settle(gb);
+        press(gb, kTray[1][0], kTray[1][1]); release(gb, 12, 100);   // the square (half width 20) would stick out on the left
+        CHECK(gb.placedCount() == 0 && gb.heldPiece() == -1);
+        press(gb, kTray[1][0], kTray[1][1]); release(gb, 40, 100);
+        CHECK(gb.placedCount() == 1);
     }
     {   // pause (0x10433e): Space; the panel is blended in through opening columns (46 frames); Esc is ignored; a click or Space ends it; no clock meanwhile
         Game gp; CHECK(gp.init(adf, err, false));

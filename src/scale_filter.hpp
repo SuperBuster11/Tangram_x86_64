@@ -6,11 +6,26 @@
 
 namespace tg {
 
-enum class ScaleFilter { Off = 0, Sharper = 1, Smooth = 2 };   // nearest neighbour / edge-preserving (EPX style) / bilinear
+enum class ScaleFilter { Off = 0, Smooth = 1, Crt = 2, Monitor1084 = 3 };
+// nearest neighbour / bilinear / CRT scanlines / Commodore 1084S monitor (soft beam, aperture grille)
 
-// Writes (src.w*scale) x (src.h*scale) pixels as 0x00RRGGBB into dst (scale >= 1).
-void scaleFrame(const Image& src, uint32_t* dst, int scale, ScaleFilter mode);
+// Writes outW x outH pixels as 0x00RRGGBB into dst. Any size works (fullscreen keeps 16:10 at the monitor's size, so the factor
+// is not always whole); the window sizes are whole multiples of 320x200.
+void scaleFrame(const Image& src, uint32_t* dst, int outW, int outH, ScaleFilter mode);
+// (src.w*scale) x (src.h*scale), scale >= 1.
+inline void scaleFrame(const Image& src, uint32_t* dst, int scale, ScaleFilter mode) {
+    if (scale < 1) scale = 1;
+    scaleFrame(src, dst, src.w * scale, src.h * scale, mode);
+}
 
-inline ScaleFilter nextFilter(ScaleFilter f) { return ScaleFilter((int(f) + 1) % 3); }
+// F8 cycle: 1084S (the default) -> CRT -> smoothed -> off -> 1084S
+inline ScaleFilter nextFilter(ScaleFilter f) {
+    switch (f) {
+    case ScaleFilter::Monitor1084: return ScaleFilter::Crt;
+    case ScaleFilter::Crt: return ScaleFilter::Smooth;
+    case ScaleFilter::Smooth: return ScaleFilter::Off;
+    default: return ScaleFilter::Monitor1084;
+    }
+}
 
 }  // namespace tg

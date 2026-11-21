@@ -22,7 +22,7 @@ Uwaga: pełny opis, sterowanie i stan prac: README.md.
 --- Okno i gra (etap 17) ---
 W Visual Studio 2022 (Otwórz folder z CMake) zbuduj cel "tangram" (Windows, GDI). Uruchom: Tangram_x64.exe (konfiguracja x64) albo Tangram_x86.exe (konfiguracja x86)
 (bez argumentów - dane gry są wkompilowane; plik .adf nie jest potrzebny). Kod Win32 nie był kompilowany przez autora – możliwe literówki.
-Na Linuksie: cmake + make tangram_x11, ./tangram_x11 [--scale 3].
+Na Linuksie: cmake + make tangram_x11, ./tangram_x11 [--scale 4].
 
 --- Lista kontrolna po pierwszym zbudowaniu na Windowsie ---
 1. Cel "tangram" kompiluje się bez błędów (kod Win32 nie był nigdy kompilowany - możliwe literówki; prześlij mi komunikaty).
@@ -33,6 +33,7 @@ Na Linuksie: cmake + make tangram_x11, ./tangram_x11 [--scale 3].
 6. Menu: wpisz 07274 + Enter -> etap 10; po jego ukończeniu pojawia się (przybliżony) etap dodatkowy.
 - Tabela wyników: po Esc w grze odpowiedz YES i wpisz imię; plik tangram.sco powstaje w katalogu uruchomienia.
 - Wpisywanie imienia w tabeli wyników: znaki interpunkcyjne idą przez WM_CHAR (kod nieskompilowany, sprawdzić).
-- F7: kolejne rozmiary okna 960x600, ... do maksimum ekranu (SetWindowPos + AdjustWindowRect; nieskompilowane).
-- F8: filtr obrazu wyłączony/ostrzejszy/wygładzony (nieskompilowane przez autora na Windows).
+- F5: kolejne rozmiary okna 1280x800, 1600x1000, ... do maksimum ekranu (960x600 i 640x400 usunięte).
+- F11 / Alt+Enter: pełny ekran (okno bez ramki na cały monitor, obraz 16:10 liczony filtrem od razu w docelowym rozmiarze, czarne pasy); jeśli 1280x800 nie mieści się na ekranie, gra startuje w pełnym ekranie. Sprawdzone przez użytkownika na Windows – działa.
+- F8: filtr obrazu cyklicznie – monitor 1084S (domyślny) -> CRT -> wygładzony -> wyłączony.
 - Ikona: assets/tangram.ico + assets/tangram.rc (wbudowane w exe). Na Linuksie ikona okna X11 z src/icon_data.hpp (_NET_WM_ICON).

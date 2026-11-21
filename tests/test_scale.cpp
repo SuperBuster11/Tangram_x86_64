@@ -16,36 +16,62 @@ int main() {
         CHECK(ok);   // Off = plain nearest neighbour
         // flat colour stays flat in every mode
         Image f = make(5, 3); for (auto& c : f.rgb) c = Rgb{10, 200, 90};
-        for (ScaleFilter m : {ScaleFilter::Sharper, ScaleFilter::Smooth}) {
+        for (ScaleFilter m : {ScaleFilter::Smooth}) {
             std::vector<uint32_t> g(size_t(15 * n * n));
             scaleFrame(f, g.data(), n, m);
             bool flat = true; for (uint32_t v : g) flat &= v == (10u << 16 | 200u << 8 | 90u);
             CHECK(flat);
         }
     }
-    {   // diagonal edge: the sharper filter only changes corner quadrants, never the original centre pixel, and uses only colours that exist
-        Image d = make(4, 4);
-        const Rgb A{255, 255, 255}, B{0, 0, 0};
-        for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) d.rgb[size_t(y * 4 + x)] = x >= y ? A : B;
-        std::vector<uint32_t> o(size_t(16 * 9));
-        scaleFrame(d, o.data(), 3, ScaleFilter::Sharper);
-        bool onlyTwo = true, centres = true;
-        for (uint32_t v : o) onlyTwo &= v == 0xFFFFFFu || v == 0u;
-        for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) { const Rgb& c = d.rgb[size_t(y * 4 + x)]; centres &= o[size_t(y * 3 + 1) * 12 + x * 3 + 1] == (c == A ? 0xFFFFFFu : 0u); }
-        CHECK(onlyTwo && centres);
-        bool changed = false;
-        std::vector<uint32_t> n3(size_t(16 * 9));
-        scaleFrame(d, n3.data(), 3, ScaleFilter::Off);
-        for (size_t i = 0; i < o.size(); i++) changed |= o[i] != n3[i];
-        CHECK(changed);   // the edge is actually rounded
-    }
     {   // smooth: a black/white step gets intermediate grey between the pixel centres
         Image s = make(2, 1); s.rgb[1] = Rgb{255, 255, 255};
-        std::vector<uint32_t> o(size_t(2 * 4));
+        std::vector<uint32_t> o(size_t(2 * 4) * 4);   // 8x4 output, the first row is checked
         scaleFrame(s, o.data(), 4, ScaleFilter::Smooth);
         CHECK((o[0] & 255) == 0 && (o[7] & 255) == 255);
         bool mono = true; for (int i = 1; i < 8; i++) mono &= (o[size_t(i)] & 255) >= (o[size_t(i - 1)] & 255);
         CHECK(mono && (o[3] & 255) > 0 && (o[4] & 255) < 255);
+    }
+    {   // CRT: every 4th output row of a flat grey area is darker (scanline gap), the others a little brighter
+        Image g = make(4, 4);
+        for (Rgb& c : g.rgb) c = Rgb{160, 160, 160};
+        std::vector<uint32_t> o(size_t(16 * 16));
+        scaleFrame(g, o.data(), 4, ScaleFilter::Crt);
+        const unsigned row1 = o[size_t(1 * 16 + 5)] & 0xff, row3 = o[size_t(3 * 16 + 5)] & 0xff;
+        CHECK(row3 < row1 && row3 < 160 && row1 >= 160);
+    }
+    {   // F8 cycle: 1084S -> CRT -> smoothed -> off -> 1084S
+        ScaleFilter f = ScaleFilter::Monitor1084; const ScaleFilter want[] = {ScaleFilter::Crt, ScaleFilter::Smooth, ScaleFilter::Off, ScaleFilter::Monitor1084};
+        for (ScaleFilter w : want) { f = nextFilter(f); CHECK(f == w); }
+    }
+    {   // any output size (fullscreen): 320x200 -> 1728x1080 (factor 5.4); every filter fills the whole buffer, CRT darkens exactly
+        // one output row per source row
+        Image g = make(320, 200); for (size_t i = 0; i < g.rgb.size(); i++) g.rgb[i] = Rgb{uint8_t(100 + i % 7), 150, 90};
+        const int W = 1728, H = 1080;
+        for (ScaleFilter m : {ScaleFilter::Off, ScaleFilter::Smooth, ScaleFilter::Crt, ScaleFilter::Monitor1084}) {
+            std::vector<uint32_t> o(size_t(W) * H + 1, 0xDEADBEEFu);
+            scaleFrame(g, o.data(), W, H, m);
+            bool filled = true; for (size_t i = 0; i < size_t(W) * H; i++) filled &= o[i] != 0xDEADBEEFu && (o[i] >> 24) == 0;
+            CHECK(filled && o[size_t(W) * H] == 0xDEADBEEFu);
+            if (m == ScaleFilter::Crt) {
+                int dark = 0; for (int y = 0; y < H; y++) dark += ((o[size_t(y) * W + 7] >> 8) & 255) < 120;
+                CHECK(dark == 200);
+            }
+        }
+    }
+    {   // 1084S: a white area keeps roughly its brightness; across a source row the beam centre is brighter than its edge;
+        // the aperture grille makes neighbouring output columns differ in colour
+        Image g = make(6, 6); for (Rgb& c : g.rgb) c = Rgb{200, 200, 200};
+        const int n = 4; std::vector<uint32_t> o(size_t(6 * n) * 6 * n);
+        scaleFrame(g, o.data(), n, ScaleFilter::Monitor1084);
+        const int W = 6 * n;
+        long sum = 0; int cnt = 0;
+        for (int y = 2 * n; y < 4 * n; y++) for (int x = 2 * n; x < 5 * n; x++) { const uint32_t v = o[size_t(y) * W + x]; sum += ((v >> 16) & 255) + ((v >> 8) & 255) + (v & 255); cnt += 3; }
+        const double avg = double(sum) / cnt;
+        std::printf("1084S: average %.1f for source 200\n", avg);
+        CHECK(avg > 150 && avg < 235);
+        auto lum = [&](int x, int y) { const uint32_t v = o[size_t(y) * W + x]; return ((v >> 16) & 255) + ((v >> 8) & 255) + (v & 255); };
+        CHECK(lum(12, 3 * n + 1) + lum(13, 3 * n + 1) + lum(14, 3 * n + 1) > lum(12, 3 * n) + lum(13, 3 * n) + lum(14, 3 * n) - 1);
+        CHECK(o[size_t(2 * n) * W + 12] != o[size_t(2 * n) * W + 13]);
     }
     std::printf(failures ? "%d FAILURES\n" : "all scale filter tests passed\n", failures);
     return failures ? 1 : 0;

@@ -574,3 +574,92 @@ Rozwiązanie etapu 2 odczytane ze zrzutu użytkownika (klasyfikacja kolorów klo
 
 ## Etap 48 – nazwa pliku exe
 - Windows: cel CMake nadal nazywa się `tangram`, ale plik wynikowy to `Tangram_x64.exe` (build 64-bitowy, CMAKE_SIZEOF_VOID_P = 8) albo `Tangram_x86.exe` (32-bitowy) – OUTPUT_NAME w CMakeLists.txt. README zaktualizowane.
+- Stary `tangram.exe` w folderze builda to pozostałość po wcześniejszych kompilacjach (CMake nie kasuje starych plików). Krok POST_BUILD celu `tangram` usuwa teraz tangram.exe/.pdb/.ilk z folderu wynikowego.
+
+## Etap 49 – cienie pod panelami
+- Panel DAT 84 (PASSWORD, PLAY WITH SCOREDISK / CREATE NEW / INSERT FORMATTED, PLAY AGAIN) oryginał wkleja minterm $C0 (zwykła kopia, bez maski) – piksele koloru 0 są czarne. To one tworzą cień (pas 3 px z prawej i u dołu) i ciemne plamki faktury. Port rysował ten obraz z kolorem 0 przezroczystym. Teraz nieprzezroczyście: panel PLAY AGAIN zgodny z symulatorem w 100% pikseli, panel scoredisk ze zrzutem z oryginału 100% (wcześniej 99,2%).
+- To samo dla sprite'ów DAT 54 na panelu PLAY AGAIN i sprite'ów kafelków etapu bonusowego (też $C0).
+
+## Etap 50 – klawisz testowy B usunięty
+- Na prośbę użytkownika (układy etapów bonusowych obejrzane). Gra nie reaguje już na B; test klawisza usunięty.
+
+## Etap 51 – tabela dla odpadającego gracza; pytanie o dyskietkę tylko raz
+- Dwóch graczy, koniec czasu i za mało punktów na PLAY AGAIN (0x1040ee): odpadający gracz dostaje tabelę wyników (z wpisaniem imienia, jeśli się łapie), po niej drugi gracz gra dalej sam od następnego etapu (wynik + numer etapu). Port: `pendingContinue_` – po wyjściu z tabeli zamiast menu wraca do gry.
+- PLAY WITH SCOREDISK oryginał zadaje tylko przy pierwszym końcu gry od uruchomienia (flaga a5-$78c3 ustawiana raz przy starcie, 0x1004c2; pytanie w 0x105e7a). Potem tabela od razu, z wcześniej wybraną opcją. Sprawdzone w symulatorze (druga gra: Esc → od razu HIGHSCORES). Port: `gameOver()` + `askedDisk_`/`useDisk_`.
+- Test w test_game (2 graczy, koniec czasu na etapie 1 → pytanie → NO → tabela → gracz 1 gra etap 2 sam; kolejny Esc → od razu tabela).
+
+## Etap 52 – muzyka według kodu
+- Gra nie ma efektów dźwiękowych: w kodzie gry (0x100008..0x110000) nie ma żadnego dostępu do rejestrów dźwięku Pauli; cały dźwięk to dwa odtwarzacze Hippela (music1.img / music2.img; wejście +0 = start od początku, +4 = stop).
+- Utwór 1 startuje przy uruchomieniu (0x100dde) i gra wszędzie: intro, menu, etapy, ETAP BONUSOWY (0x104c52 nie dotyka muzyki), tabela wyników. Utwór 2 oryginał tylko ładuje; włącza go wyłącznie klawisz.
+- Klawisze (tylko w pętli etapu – nie w menu, nie w etapie bonusowym, nie w pauzie): M (0x1005fc) na zmianę wywołuje stop / start bieżącego utworu (start = od początku); klawisz CSI (0x100612: F1–F10, strzałki, Help) zatrzymuje bieżący utwór i startuje drugi od początku. Wybrany utwór zostaje do następnej zmiany (także w menu i w kolejnych grach).
+- Port: M = stop/start od początku (zamiast wyciszania), F2 (zgodnie z wcześniejszym poleceniem użytkownika tylko F2) = drugi utwór od początku, oba tylko w trakcie etapu; utwór 2 nie włącza się już sam w etapie bonusowym. Głośność 25% bez zmian. Test w test_game.
+
+## Etap 53 – długość utworów i muzyka w etapie bonusowym (sprawdzone w symulatorze)
+- Kopia symulatora dostała log zapisów do rejestrów dźwięku (PAULALOG). Okres zapętlenia (pierwsze powtórzenie sekwencji zapisów):
+  utwór 1: oryginał 274,5 s, port 274,4 s; utwór 2 (włączony klawiszem F2 w symulatorze): oryginał 115,8 s, port 115,8 s. Długości są prawidłowe (utwór 1 = 4:34, utwór 2 = 1:56, potem od miejsca pętli).
+- Etap bonusowy w symulatorze (PCSET w czasie bonusu): wykonuje się kod odtwarzacza utworu 1 (0x18a090..), kod utworu 2 (0x25df20..) ani razu. Użytkownik pamięta utwór 2 w bonusie – na tym ADF kod tego nie robi; czekam na decyzję.
+
+## Etap 54 – utwór 2 w etapie bonusowym (decyzja użytkownika)
+- Na wyraźne polecenie użytkownika etap bonusowy gra utwór 2 (od początku), po nim wraca wybrany utwór (od początku). W kodzie oryginału tego nie ma (Etap 53) – świadome odstępstwo. M wyłącza muzykę także dla bonusu.
+
+## Etap 55 – rysowanie wielokątów porównane z prawdziwą Amigą (zrzuty z WinUAE)
+- Zrzut etapu 003 (pusta figura, powiększenie dokładnie 4x, przesunięcie -1 px w poziomie): czerwona figura i czarny cień portu zgodne z WinUAE co do piksela (6381 px figury, 1555 px cienia); różnice tylko pod kursorem myszy.
+- Zrzut etapu 002 (7 elementów, 4x): po korekcie pozycji odczytanych wcześniej z tego zrzutu (dwa małe trójkąty o 1 px wyżej, średni trójkąt o 1 px w lewo i w górę) zgodność elementów do 4 pojedynczych pikseli na ostrych narożnikach (rozmycie JPEG).
+- Zrzut etapu 200 (7 elementów, 3x): po podobnej korekcie (±1 px na 6 elementach) – różnice tylko pod kursorem i 5 pikseli rozmycia.
+- Wniosek: wypełnianie wielokątów w porcie (fillPolygonDrawn: wiersze półotwarte, prawy koniec odcinka włącznie, dolny wiersz lokalnych minimów ekranowych) daje to samo co AreaEnd prawdziwej Amigi – zmiana nie jest potrzebna. Różnice z wcześniejszych porównań wynikały z niedokładnie dopasowanych pozycji elementów, nie z algorytmu.
+- tests/data/level2_solution.txt i level200_solution.txt poprawione na pozycje zgodne ze zrzutami (oba nadal zaliczane).
+
+## Etap 56 – reszta kodu: elementy, panel hasła
+- Obsługa myszy w etapie (0x101bd0..0x102410): oryginał działa „klik – klik” (LPM na tacce podnosi, LPM na planszy kładzie, LPM na położonym elemencie podnosi go, klik w tackę z elementem tego typu w ręce odkłada go); port zostaje przy przeciąganiu (wcześniejsza decyzja użytkownika), reguły poniżej przeniesione:
+  - element kładzie się tylko, gdy wszystkie jego wierzchołki leżą w x 6..221, y 6..193 (0x10242a); inaczej w oryginale nic się nie dzieje, w porcie element wraca na tackę;
+  - kolejność rysowania: nowo położony element jest rysowany na wierzchu; podniesienie elementu przerysowuje planszę w kolejności slotów (duży, duży, kwadrat, średni, mały, mały, równoległobok; 0x10259c → 0x102958). Podnosi się element, którego kolor jest pod kursorem (= wierzchni);
+  - PPM obraca trzymany element o 1/16 obrotu raz na wciśnięcie (licznik a5-$78b9 nie pozwala na powtarzanie);
+  - trzymany element zastępuje kursor myszy (0x102872) – port nie rysuje już kursora nad trzymanym elementem.
+- Panel hasła (0x104190): zamyka go dowolny przycisk myszy albo dowolny klawisz (wcześniej w porcie tylko LPM / Enter).
+- Tabela wyników / wpisywanie imienia (0x1034a2.., 0x105e7a..): wyniki porównywane jako napisy dopełnione spacjami (port: liczbowo – dla tych samych długości to samo); ekrany już zgodne ze zrzutami w 100%.
+- Test: element wystający poza pole nie zostaje położony.
+
+## Etap 57 – podnoszenie elementu za każdy piksel
+- Zgłoszenie: rombu (kwadratu) nie dało się wyciągnąć za dolny róg. Przyczyna: test „punkt w wielokącie” (środek piksela) pomijał piksele krawędzi rysowane przez wypełnianie (prawy koniec odcinka, dolny wiersz narożnika) – dla każdego elementu 40–120 pikseli nie dawało się chwycić.
+- Teraz port sprawdza dokładnie narysowane piksele elementu (fillPolygonDrawn), jak oryginał, który patrzy na kolor pod kursorem. Test: kwadrat podnoszony za dolny i prawy róg.
+
+## Etap 58 – równoległobok na tacce chwytany za dolny róg
+- Obrazek równoległoboku na tacce sięga y = 148 (dolny róg x 294..302), a prostokąt chwytania kończył się na y = 140. Teraz {294, 88, 315, 149} – jak obszar w oryginale (0x1022aa: x 294..314, y 89..149). Test w test_game.
+
+## Etap 59 – nowe filtry obrazu i klawisze F4–F9
+- Klawisze (Win32 i X11): F4 – rozmiar okna (wcześniej F7), F5 – filtr wyłączony, F6 – ostrzejszy (EPX), F7 – wygładzony (bilinearny), F8 – linie CRT, F9 – antialiasing figur. Gra nie dostaje już F5–F9 (i tak ich nie używa; F2 = zmiana utworu bez zmian).
+- CRT (scale_filter.cpp): każdy wiersz źródła → n wierszy, ostatni przyciemniony do 50% (przy n ≥ 4 pierwszy do 82%), lekkie poziome rozmycie z sąsiadem, jasność +12%.
+- Antialiasing figur (Game::scaleFrame): drawScene zapisuje listę wielokątów (cień, figura, elementy, trzymany element) z kolorami oraz obraz przed nimi i po nich. W oknie: najbliższy sąsiad, a w pikselach przy krawędziach wielokątów (gdzie zmienia się wierzchni wielokąt) – ponowne rysowanie z próbkowaniem 2×2 / 3×3 na piksel okna. Ciągły kształt odpowiada wypełnianiu gry (odcinek do prawej krawędzi + 1, dodatkowy wiersz dołków), więc elementy kryjące figurę na zwykłym obrazie kryją ją też po wygładzeniu (bez czerwonych szczelin). Miejsca zakryte panelem, kursorem lub ściemnieniem zostają bez zmian. Wynik buforowany, gdy scena się nie zmienia; liczony od nowa przy ruchu (Release: ~6 ms przy 1280×800, ~12 ms przy 1920×1200).
+- Testy: test_scale (CRT, Antialias bez gry = Off, cykl filtrów), test_game (antialiasing zmienia piksele krawędzi, liczba czerwonych pikseli prawie bez zmian, bufor).
+- Poprawka (zgłoszenie użytkownika ze zrzutem): pod ostrymi dolnymi rogami (róg na dole albo obrót o 1 krok) antialiasing dorysowywał kanciasty „ząbek” – kopię kształtu sprzed jednego wiersza. Teraz dodatkowy wiersz dostają tylko płaskie dna (prostokąt dokładnie jak w wypełnianiu), a ostry róg zostaje ostry.
+- Poprawka 2 (zrzut z równoległobokiem): wycięty lewy dolny róg i brak kawałka górnego rogu. Gładki kształt liczy teraz krawędzie tak jak wypełnianie gry: to, które krawędzie przecinają wiersz, rozstrzyga numer wiersza (poziome krawędzie zostają na swoim miejscu, cały górny wiersz jest pełny), a punkt przecięcia bierze się pół wiersza wyżej od próbki (gra mierzy na górnej linii wiersza). Płaskie dna dostają dodatkowy wiersz jak w wypełnianiu; ostry róg dostaje dodatkowy piksel tylko wtedy, gdy jeden z jego boków jest pionowy (inaczej zostaje ostry). Sprawdzone na trójkątach i równoległoboku w kilku obrotach; bez czerwonych szczelin pod elementami.
+
+## Etap 60 – antialiasing całego obrazu, F8 cyklicznie, F5 rozmiar okna
+- Klawisze (Win32 i X11): F5 – kolejny rozmiar okna (960×600, 1280×800, … do maksimum ekranu, potem znowu 960×600); F8 – kolejny filtr: CRT (domyślny przy starcie) → wygładzony → antialiasing → wyłączony → CRT. F4, F6, F7, F9 nie robią już nic (EPX zostaje w kodzie, ale nie ma go w cyklu).
+- Okno startuje w 1280×800 (albo mniejszym, jeśli ekran jest za mały); rozmiaru 640×400 już nie ma (najmniejszy 960×600).
+- Antialiasing obejmuje cały obraz (tg::scaleFrame, ScaleFilter::Antialias): reguła xBR poziomu 1 dla dowolnej skali – dla każdego rogu piksela źródła z otoczenia 5×5 rozstrzyga się, czy biegnie tam ukośna krawędź; jeśli tak, róg za linią x+y = 1,5 dostaje kolor sąsiada, z wygładzoną granicą. Płaskie obszary i proste krawędzie zostają bez zmian. Na to Game::scaleFrame nakłada jak dotąd dokładnie wygładzoną figurę, cień i klocki (wynik obu buforowany, gdy obraz się nie zmienia). Odległości ukośne liczone raz na klatkę, wiersze dzielone na wątki (tgcore linkuje Threads). Czas (Release, 2 rdzenie w środowisku testowym): ~6–7 ms przy 1280×800.
+- Testy: test_scale (cykl F8, schodek 45° dostaje półtony, płaski obszar bez zmian), test_game bez zmian (czerwone piksele, bufor).
+- Przy okazji: test_scale (filtr wygładzony) pisał poza bufor wyjścia (2×1 w skali 4 to 8×4 pikseli, bufor miał 8) – ujawniło się jako awaria po zmianie układu pamięci; bufor poprawiony, test_scale czysty pod AddressSanitizerem.
+
+## Etap 61 – bez antialiasingu i EPX, nowe filtry: 1084S, ostry bilinearny, bikubiczny
+- Usunięte na prośbę użytkownika: antialiasing całego obrazu (xBR) i antialiasing figur/klocków (zapisywanie wielokątów w drawScene, Game::scaleFrame z ponownym rysowaniem, bufor) oraz filtr EPX. Game::scaleFrame to teraz tylko wywołanie tg::scaleFrame.
+- F8 cyklicznie: CRT (domyślny) → monitor 1084S → ostry bilinearny → bikubiczny → wygładzony → wyłączony → CRT.
+- Monitor 1084S (monitor1084): liczony w świetle liniowym (gamma 2,2); poziomo lekkie rozmycie Gaussa (σ = 0,5 piksela źródła, jak ograniczone pasmo monitora); pionowo każdy wiersz źródła to wiązka o profilu Gaussa, szersza dla jaśniejszych kolorów (σ 0,30–0,46 wiersza), więc ciemne wiersze mają przerwy, a jasne prawie się stykają; na końcu maska kratowa (paski R, G, B w kolumnach okna, 78% w „cudzych” kolumnach) i wyrównanie jasności.
+- Ostry bilinearny: piksele zostają kwadratowe, mieszane jest tylko po jednym pikselu okna z każdej strony granicy (75/25), więc znika twarde „schodkowanie” bez rozmycia.
+- Bikubiczny: Catmull-Rom 4×4, rozdzielnie (najpierw wiersze, potem kolumny), wynik obcięty do 0..255.
+- Filtry dzielą wiersze na wątki (parallelRows). Czasy Release przy 1280×800 (2 rdzenie): CRT 2,4 ms, 1084S 7,8 ms, ostry bilinearny 2,5 ms, bikubiczny 3,5 ms, wygładzony 2,7 ms.
+- Testy: test_scale (cykl F8, płaski kolor bez zmian w filtrach interpolujących, schodek w ostrym bilinearnym = 0,0,0,64,191,255,255,255, bikubiczny bardziej stromy od bilinearnego, 1084S zachowuje jasność, wiązka i maska), z test_game usunięty test antialiasingu.
+
+## Etap 62 – 1084S domyślny, tylko 4 filtry, okno od 1280×800, pełny ekran
+- Filtry (F8): monitor 1084S (domyślny) → CRT → wygładzony → wyłączony → 1084S. Ostry bilinearny i bikubiczny usunięte z kodu.
+- tg::scaleFrame przyjmuje dowolny rozmiar wyjścia (outW × outH), nie tylko całkowitą wielokrotność: najbliższy sąsiad, bilinearny i 1084S liczą pozycję piksela źródła ciągle; CRT przyciemnia wiersze w ostatniej 1/n wiersza źródła (n = wiersze okna na wiersz źródła; przy n ≥ 4 także pierwszą 1/n) – w każdy taki pas wpada dokładnie jeden wiersz okna przy każdej skali, więc linie są równe także przy skali 5,4. Dla całkowitych skal wynik jak dotąd (poza środkową kolumną przy nieparzystym n w CRT).
+- Okno: najmniejszy rozmiar 1280×800 (960×600 usunięty), F5 przełącza 1280×800 → 1600×1000 → … → maksimum ekranu.
+- Pełny ekran: F11 albo Alt+Enter. Win32: okno WS_POPUP na cały monitor (MonitorFromWindow/GetMonitorInfo), powrót przez Get/SetWindowPlacement; X11: _NET_WM_STATE_FULLSCREEN przez menedżer okien. Obraz to największy prostokąt 16:10 mieszczący się w oknie, wyśrodkowany, z czarnymi pasami; filtr liczony od razu w tym rozmiarze (np. 1728×1080 na monitorze 1920×1080), bez późniejszego rozciągania. Mysz przeliczana przez ten prostokąt. Ten sam układ działa po zmaksymalizowaniu lub ręcznej zmianie rozmiaru okna. W pełnym ekranie F5 nic nie robi. Win32: jeśli 1280×800 nie mieści się na ekranie (np. 1366×768), gra startuje w pełnym ekranie.
+- Sprawdzone pod Xvfb 1920×1080: okno zmienione na 1920×1080 → obraz 1728×1080 z czarnymi pasami. Testy: test_scale (cykl F8, wszystkie filtry przy 1728×1080 wypełniają cały bufor i nie piszą poza nim, CRT ma dokładnie 200 ciemnych wierszy).
+
+## Etap 63 – README zaktualizowane
+- Użytkownik potwierdził: pełny ekran działa na Windows.
+- README.md: nowa sekcja „Obraz” (rozmiary okna, pełny ekran, filtry 1084S/CRT/wygładzony/wyłączony), sekcja „Stan” przepisana (była nieaktualna: dwóch graczy, tabela wyników, Novice/Expert są zrobione), `--scale 4`. README_VS2022.txt: `--scale 4`, pełny ekran sprawdzony na Windows.
+
+## Etap 64 – tytuł okna z bitowością
+- Tytuł okna: „Tangram 64-bit” w Tangram_x64.exe, „Tangram 32-bit” w Tangram_x86.exe (rozpoznanie po sizeof(void*), w czasie kompilacji); ten sam tytuł w okienku błędu przy starcie. Wersja X11 ma tytuł według tej samej zasady.

@@ -22,7 +22,7 @@ namespace {
 
 // Tray positions of the five piece types (screen pixels; measured in the running game).
 // Pick-up areas of the tray pieces (x0, y0, x1, y1 inclusive), the visible pieces of the panel picture (their whole silhouette, e.g. the lower tip of the diamond)
-const int kTrayBox[kPieceTypes][4] = {{236, 4, 314, 46}, {234, 47, 275, 90}, {275, 47, 315, 88}, {234, 88, 275, 112}, {294, 88, 315, 140}};
+const int kTrayBox[kPieceTypes][4] = {{236, 4, 314, 46}, {234, 47, 275, 90}, {275, 47, 315, 88}, {234, 88, 275, 112}, {294, 88, 315, 149}};   // parallelogram down to its bottom corner (y 148; the original: 89..149)
 const Pt kTray[kPieceTypes] = {{262, 22}, {255, 72}, {296, 70}, {258, 102}, {305, 104}};
 // Start-up sequence (50 Hz frames): Thalion logo, title picture, credits, then the menu fades in.
 // Hold times follow the Go port (2 x 2.2 s per picture, 4.5 s for the credits); each picture fades in and out.
@@ -36,16 +36,6 @@ Rgb nearest(const Palette& p, Rgb want) {
         if (d < best) { best = d; r = c; }
     }
     return r;
-}
-
-bool inside(const std::vector<Pt>& poly, int px, int py) {
-    bool in = false;
-    const size_t n = poly.size();
-    for (size_t i = 0, j = n - 1; i < n; j = i++) {
-        double xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
-        if ((yi > py + 0.5) != (yj > py + 0.5) && px + 0.5 < (xj - xi) * (py + 0.5 - yi) / (yj - yi) + xi) in = !in;
-    }
-    return in;
 }
 
 std::string pad(int v, int w) {
@@ -110,7 +100,7 @@ void Game::loadScores(const Bytes& data) {
 void Game::endGame(bool withScoreDisk) {
     holding_ = false; held_ = nullptr; paused_ = false; hsFrame_ = 0; hsLeave_ = -1; entryName_.clear(); entryRank_ = -1;
     pendingEntry_ = -1;
-    if (withScoreDisk && twoPlayers_) {   // 0x10088a: two players: player 1, then player 2 may enter a name, each if his score qualifies
+    if (withScoreDisk && twoPlayers_ && !pendingContinue_) {   // 0x10088a: two players: player 1, then player 2 may enter a name, each if his score qualifies
         playerScore_[player_] = score_;
         int first = -1;
         for (int p = 0; p < 2; p++)
@@ -140,6 +130,14 @@ int Game::randomLevel() { return 1 + int(rng_() % levels_.size()); }
 void Game::nextStage() {   // after a solved stage: the other player (two-player mode) plays the next stage
     if (twoPlayers_) { playerScore_[player_] = score_; player_ ^= 1; score_ = playerScore_[player_]; }
     startLevel(wipeMode() ? nextLevel_ : level_ + 1);
+}
+
+void Game::gameOver(bool fromBonus) {
+    // 0x1034a2: the high-score routine asks "PLAY WITH SCOREDISK" only the first time in a session (flag a5-$78c3, set once at
+    // start-up); after that the answer given then is used again
+    askFromBonus_ = fromBonus;
+    if (askedDisk_) endGame(useDisk_);
+    else mode_ = Mode::AskDisk;
 }
 
 void Game::leaveTwoPlayer() {
@@ -227,13 +225,38 @@ int Game::remaining(PieceType t) const {
     return pieceCount(t) - used - ((holding_ && held_storage_.type == t) ? 1 : 0);
 }
 
+// The original keeps the 7 pieces in fixed slots (large, large, square, medium, small, small, parallelogram). A piece put down is
+// drawn on top of what is on the screen (0x102410); picking one up (0x10259c) redraws the figure and the others in slot order
+// (0x102958). So placed_ is kept in drawing order: appended on a drop, re-sorted by slot on a pick-up.
+static int pieceSlot(PieceType t, int inst) {
+    static const int kBase[kPieceTypes] = {0, 2, 3, 4, 6};
+    return kBase[t] + (t == kLargeTriangle || t == kSmallTriangle ? inst : 0);
+}
+
+std::vector<size_t> Game::drawOrder() const {
+    std::vector<size_t> o(placed_.size());
+    for (size_t i = 0; i < o.size(); i++) o[i] = i;
+    return o;
+}
+
 bool Game::pickPlaced(int x, int y) {
-    for (size_t i = placed_.size(); i-- > 0;) {
+    const std::vector<size_t> order = drawOrder();   // 0x10259c picks the piece whose colour is under the pointer: the top one
+    for (size_t k = order.size(); k-- > 0;) {
+        const size_t i = order[k];
         const Placed& p = placed_[i];
-        if (inside(placedOutline(p.type, p.rotation, p.x, p.y), x, y)) {
+        // exactly the pixels the piece covers on the screen (the original looks at the colour under the pointer)
+        std::vector<uint8_t> m(size_t(kBoardW) * kBoardH, 0);
+        fillPolygonDrawn(placedOutline(p.type, p.rotation, p.x, p.y), kBoardW, kBoardH, m);
+        if (x >= 0 && y >= 0 && x < kBoardW && y < kBoardH && m[size_t(y) * kBoardW + size_t(x)]) {
             held_storage_ = {p.type, p.rotation, inst_[i]};
             placed_.erase(placed_.begin() + long(i));
             inst_.erase(inst_.begin() + long(i));
+            std::vector<size_t> o(placed_.size());   // the board is redrawn in slot order
+            for (size_t k = 0; k < o.size(); k++) o[k] = k;
+            std::stable_sort(o.begin(), o.end(), [&](size_t a, size_t b) { return pieceSlot(placed_[a].type, inst_[a]) < pieceSlot(placed_[b].type, inst_[b]); });
+            std::vector<Placed> np; std::vector<int> ni;
+            for (size_t k : o) { np.push_back(placed_[k]); ni.push_back(inst_[k]); }
+            placed_ = np; inst_ = ni;
             holding_ = true; held_ = &held_storage_;
             return true;
         }
@@ -257,8 +280,15 @@ void Game::trayClick(int x, int y) {
     }
 }
 
+bool Game::fitsBoard(int x, int y) const {
+    // 0x10242a: a piece is put down only if every corner lies within x 6..221, y 6..193; otherwise the click does nothing
+    for (const Pt& p : placedOutline(held_storage_.type, held_storage_.rot, x, y))
+        if (p.x < 6 || p.x > 221 || p.y < 6 || p.y > 193) return false;
+    return true;
+}
+
 void Game::drop(int x, int y) {
-    if (x >= kBoardRight) return;   // pieces can only be put down on the figure area
+    if (x >= kBoardRight || !fitsBoard(x, y)) return;   // pieces can only be put down wholly on the figure area
     placed_.push_back({held_storage_.type, held_storage_.rot, x, y});
     inst_.push_back(held_storage_.inst);
     holding_ = false; held_ = nullptr;
@@ -287,21 +317,24 @@ void Game::checkSolved() {
 
 void Game::audio(int16_t* out, int frames) {
     int want = wantedSong();
-    if (want != song_) {
+    if (want != song_ || musicGen_ != songGen_) {   // M / F2 stop a song or start one from its beginning (entry +4 / +0 of the player)
         if (song_) music_[song_ - 1].stop();
-        song_ = want;
+        song_ = want; songGen_ = musicGen_;
         std::string err;
-        if (!music_[song_ - 1].load(musicImage_[song_ - 1], err) || !music_[song_ - 1].start(err)) song_ = 0;   // reload = song from the start
+        if (song_ && (!music_[song_ - 1].load(musicImage_[song_ - 1], err) || !music_[song_ - 1].start(err))) song_ = 0;   // reload = song from the start
     }
     if (!song_) { std::fill(out, out + 2 * size_t(frames), int16_t(0)); return; }
-    music_[song_ - 1].setGain(muted_ ? 0.0 : 0.25);   // starts at 25%
+    music_[song_ - 1].setGain(0.25);
     music_[song_ - 1].render(out, frames);
 }
 
 void Game::event(const Event& e) {
-    if (e.type == Event::Key && e.key == 'M') { muted_ = !muted_; return; }
-    if (e.type == Event::Key && e.key == kKeyF1 + 1) {   // cracked version: F2 switches the song, cyclically
-        musicOverride_ = wantedSong() == 1 ? 2 : 1;
+    // music keys (0x1005fc / 0x100612) are read only in the play loop of a stage (not in the menu, the bonus stage or while paused):
+    // M stops the song, M again starts it from the beginning; F2 (the original takes any CSI key) stops it and starts the other song
+    const bool musicKeys = mode_ == Mode::Play && !paused_ && pauseFx_ < 0 && panelFx_ < 0 && toFrame_ < timeoutBlank();
+    if (e.type == Event::Key && e.key == 'M') { if (musicKeys) { musicOn_ = !musicOn_; musicGen_++; } return; }
+    if (e.type == Event::Key && e.key == kKeyF1 + 1) {
+        if (musicKeys) { songSel_ = songSel_ == 1 ? 2 : 1; musicOn_ = true; musicGen_++; }
         return;
     }
     if (mode_ == Mode::Intro) {
@@ -343,8 +376,7 @@ void Game::event(const Event& e) {
         if (paused_) break;
         if (e.type == Event::Key) {
             if (e.key == ' ' || e.key == 'P') { paused_ = true; pauseFx_ = 0; holding_ = false; held_ = nullptr; }
-            else if (e.key == kKeyEsc) { holding_ = false; held_ = nullptr; askFromBonus_ = false; mode_ = Mode::AskDisk; }
-            else if (e.key == 'B' && !paused_ && !twoPlayers_) startBonusStage(level_ + 1);   // TEST KEY (not in the original): the next bonus stage at once
+            else if (e.key == kKeyEsc) { holding_ = false; held_ = nullptr; gameOver(false); }
             break;
         }
         if (paused_) break;
@@ -353,8 +385,8 @@ void Game::event(const Event& e) {
         if (e.type == Event::Down && e.button == 1) { if (holding_) held_storage_.rot = (held_storage_.rot + 1) % kRotations; }
         else if (e.type == Event::Down && e.button == 0 && !holding_) { if (!pickPlaced(e.x, e.y)) trayClick(e.x, e.y); }
         else if (e.type == Event::Up && e.button == 0 && holding_) {
-            if (e.x < kBoardRight) drop(e.x, e.y);
-            else { holding_ = false; held_ = nullptr; }   // released outside the figure area: the piece goes back to the tray
+            if (e.x < kBoardRight && fitsBoard(e.x, e.y)) drop(e.x, e.y);
+            else { holding_ = false; held_ = nullptr; }   // released outside the figure area (or sticking out of it): the piece goes back to the tray
         }
         break;
     case Mode::AskReplay:
@@ -364,7 +396,7 @@ void Game::event(const Event& e) {
                 placed_.clear(); inst_.clear(); holding_ = false; held_ = nullptr; frames_ = 0; timedOut_ = false; toFrame_ = -1;
                 bonusBase_ = 0; mode_ = Mode::Play; panelFx_ = 0;
             } else if (e.x > 117 && e.x < 143) {   // NO
-                if (twoPlayers_) leaveTwoPlayer(); else mode_ = Mode::AskDisk;
+                if (twoPlayers_) leaveTwoPlayer(); else gameOver(false);
             }
         }
         break;
@@ -372,9 +404,9 @@ void Game::event(const Event& e) {
         auto hit = [&](TextPos p, int rec) { return e.x >= p.x && e.x < p.x + pics_[size_t(rec)].w && e.y >= p.y && e.y < p.y + pics_[size_t(rec)].h; };
         if (e.type == Event::Down && e.button == 0) {
             bool yes = hit(kYesPos, kDatYes), no = hit(kNoPos, kDatNo);
-            if (mode_ == Mode::AskDisk) { if (yes) mode_ = Mode::AskNew; else if (no) endGame(false); }
-            else if (mode_ == Mode::AskNew) { if (yes) mode_ = Mode::AskFormat; else if (no) endGame(true); }
-            else if (yes) { scores_ = defaults_; scoresDirty_ = true; endGame(true); }   // a fresh score disk; NO does nothing
+            if (mode_ == Mode::AskDisk) { if (yes) mode_ = Mode::AskNew; else if (no) { askedDisk_ = true; useDisk_ = false; endGame(false); } }
+            else if (mode_ == Mode::AskNew) { if (yes) mode_ = Mode::AskFormat; else if (no) { askedDisk_ = true; useDisk_ = true; endGame(true); } }
+            else if (yes) { scores_ = defaults_; scoresDirty_ = true; askedDisk_ = true; useDisk_ = true; endGame(true); }   // a fresh score disk; NO does nothing
         }
         break;   // Esc / Return do nothing here in the original
     }
@@ -397,12 +429,11 @@ void Game::event(const Event& e) {
         else if (entryName_.size() < 8 && e.key >= 32 && e.key <= 95) entryName_ += char(e.key);   // anything the keyboard types (letters in capitals)
         break;
     case Mode::Bonus:
-        if (e.type == Event::Key && e.key == kKeyEsc && bonusPhase_ < 3) { bonusSel_ = -1; askFromBonus_ = true; mode_ = Mode::AskDisk; }
-        else if (e.type == Event::Key && e.key == 'B' && bonusPhase_ == 0) { score_ += bonusPoints_; startBonusStage(bonusNext_); }   // TEST KEY: the next layout
+        if (e.type == Event::Key && e.key == kKeyEsc && bonusPhase_ < 3) { bonusSel_ = -1; gameOver(true); }
         else if (e.type == Event::Down && e.button == 0 && bonusPhase_ == 0) bonusClick(e.x, e.y);
         break;
     case Mode::Password:
-        if (((e.type == Event::Down && e.button == 0) || (e.type == Event::Key && e.key == kKeyEnter)) &&
+        if ((e.type == Event::Down || e.type == Event::Key) &&   // 0x104320: any mouse button or any key closes the password panel
             !wipeMode() && closeFrame_ < 0 && toBonusFade_ < 0 && pwFrame_ >= kPwOpenStart + 6 * kPwOpenSteps) {
             if (bonusDue_ && level_ < int(levels_.size())) toBonusFade_ = 0;   // the bonus stage follows: fade to black first
             else closeFrame_ = 0;
@@ -431,13 +462,17 @@ void Game::step() {
             toFrame_ = -1; timedOut_ = true; askFromBonus_ = false;
             // 0x103c7e: with at least 2 x (25 x stage) points the player may buy the stage again ("PLAY AGAIN FOR nnnn POINTS")
             if (score_ >= 2 * startBonus(level_)) { mode_ = Mode::AskReplay; panelFx_ = 0; }
-            else if (twoPlayers_) leaveTwoPlayer();
-            else mode_ = Mode::AskDisk;
+            else if (twoPlayers_) { pendingContinue_ = true; gameOver(false); }   // 0x1040ee: the table for the player who drops out, then the other one goes on
+            else gameOver(false);
         }
     }
     if (mode_ == Mode::HighScores || mode_ == Mode::NameEntry) {
         if (hsLeave_ >= 0) {
-            if (++hsLeave_ >= kHsFadeOut + kHsGap) { mode_ = Mode::Menu; menuFade_ = kFadeFrames - 4; typed_.clear(); hsLeave_ = -1; }
+            if (++hsLeave_ >= kHsFadeOut + kHsGap) {
+                hsLeave_ = -1;
+                if (pendingContinue_) { pendingContinue_ = false; leaveTwoPlayer(); }   // two players: the other one goes on alone
+                else { mode_ = Mode::Menu; menuFade_ = kFadeFrames - 4; typed_.clear(); }
+            }
         } else {
             hsFrame_++;
             if (mode_ == Mode::HighScores && hsFrame_ >= kHsFrames) leaveScores();
@@ -538,7 +573,7 @@ void Game::drawScene() {
         fillPoly(poly, silhouette_);
     }
     if (!hide) {
-        for (size_t i = 0; i < placed_.size(); i++) drawPiece(placed_[i].type, placed_[i].rotation, inst_[i], placed_[i].x, placed_[i].y);
+        for (size_t i : drawOrder()) drawPiece(placed_[i].type, placed_[i].rotation, inst_[i], placed_[i].x, placed_[i].y);
     }
     {   // remaining pieces per type, printed on the tray
         static const Pt kCount[kPieceTypes] = {{244, 25}, {268, 49}, {295, 49}, {272, 95}, {292, 95}};
@@ -606,7 +641,7 @@ void Game::drawHighScores() {
 
 void Game::drawPanelOverlay() {
     if (mode_ == Mode::AskDisk || mode_ == Mode::AskNew || mode_ == Mode::AskFormat) {
-        blitPicture(frame_, pics_[84], kPausePanel.x, kPausePanel.y, play_);
+        blitPicture(frame_, pics_[84], kPausePanel.x, kPausePanel.y, play_, false);   // pasted with minterm $C0 (plain copy): colour 0 = black, that is the shadow
         text(pics_[kFontUi], 38, 93, mode_ == Mode::AskDisk ? "PLAY WITH SCOREDISK" : mode_ == Mode::AskNew ? "CREATE NEW SCORE DISK" : "INSERT FORMATTED DISK", play_);
         for (int rec : {kDatYes, kDatNo}) {   // the YES / NO button pictures are drawn opaque
             const DatPicture& b = pics_[size_t(rec)]; TextPos pos = rec == kDatYes ? kYesPos : kNoPos;
@@ -615,9 +650,9 @@ void Game::drawPanelOverlay() {
                     { uint8_t v = b.index[size_t(gy) * b.w + gx]; size_t i = size_t(pos.y + gy) * 320 + pos.x + gx; frame_.index[i] = v; frame_.rgb[i] = play_.c[v]; }
         }
     } else if (mode_ == Mode::AskReplay) {   // 0x103cbc: panel, two sprites, "PLAY AGAIN FOR" / "nnnn POINTS", YES / NO
-        blitPicture(frame_, pics_[84], kPausePanel.x, kPausePanel.y, play_);
-        blitPicture(frame_, pics_[54], 35, 90, play_);
-        blitPicture(frame_, pics_[54], 176, 90, play_);
+        blitPicture(frame_, pics_[84], kPausePanel.x, kPausePanel.y, play_, false);   // pasted with minterm $C0 (plain copy): colour 0 = black, that is the shadow
+        blitPicture(frame_, pics_[54], 35, 90, play_, false);
+        blitPicture(frame_, pics_[54], 176, 90, play_, false);
         text(pics_[kFontUi], 59, 84, "PLAY AGAIN FOR", play_);
         std::string n = std::to_string(2 * startBonus(level_)); while (n.size() < 4) n = "0" + n;
         text(pics_[kFontUi], 71, 93, n + " POINTS", play_);
@@ -628,7 +663,7 @@ void Game::drawPanelOverlay() {
                     { uint8_t v = b.index[size_t(gy) * b.w + gx]; size_t i = size_t(pos.y + gy) * 320 + pos.x + gx; frame_.index[i] = v; frame_.rgb[i] = play_.c[v]; }
         }
     } else if (mode_ == Mode::Password) {
-        blitPicture(frame_, pics_[84], kPausePanel.x, kPausePanel.y, play_);
+        blitPicture(frame_, pics_[84], kPausePanel.x, kPausePanel.y, play_, false);   // pasted with minterm $C0 (plain copy): colour 0 = black, that is the shadow
         text(pics_[kFontUi], kPwPassword.x, kPwPassword.y, "PASSWORD", play_);
         text(pics_[kFontUi], kPwFor.x, kPwFor.y, "FOR", play_);
         text(pics_[kFontUi], kPwLevel.x, kPwLevel.y, "LEVEL", play_);
@@ -729,7 +764,7 @@ void Game::render() {
         for (int i = 0; i < kBonusCells; i++) {
             if (bonusGrid_[i] <= 0 || mode_ != Mode::Bonus) continue;
             int x, y; bonusTile(i, x, y);
-            blitPicture(frame_, pics_[size_t(32 + bonusGrid_[i])], x, y, play_);
+            blitPicture(frame_, pics_[size_t(32 + bonusGrid_[i])], x, y, play_, false);   // $C0 copy, opaque
             if (i == bonusSel_)   // red frame on the outer pixels of the selected tile
                 for (int k = 0; k < 16; k++)
                     for (auto pr : {std::pair<int, int>{x + k, y}, std::pair<int, int>{x + k, y + 15}, std::pair<int, int>{x, y + k}, std::pair<int, int>{x + 15, y + k}})
@@ -872,7 +907,7 @@ void Game::render() {
     if (mode_ == Mode::Password && toBonusFade_ >= 0) fade(kFadeFrames - toBonusFade_, kFadeFrames);
     if (mode_ == Mode::Play && fadeIn_ < kFadeFrames) fade(fadeIn_, kFadeFrames);
     if (mode_ == Mode::Play && toFrame_ >= timeoutBlank()) { fade(0, 1); return; }   // blank frame before the question
-    if (mode_ != Mode::Password)   // the mouse pointer is hidden from the end of the stage until the next one is shown
+    if (mode_ != Mode::Password && !(mode_ == Mode::Play && holding_ && !paused_))   // hidden from the end of the stage until the next one; 0x102872: a piece in hand replaces the pointer
         blitPicture(frame_, pics_[kDatCursor], mx_ + kCursorOffset.x, my_ + kCursorOffset.y, play_);
 }
 

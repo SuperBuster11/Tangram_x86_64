@@ -9,6 +9,7 @@
 #include "board.hpp"
 #include "dat.hpp"
 #include "image.hpp"
+#include "scale_filter.hpp"
 #include "levels.hpp"
 #include "scoring.hpp"
 #include "music.hpp"
@@ -33,11 +34,14 @@ public:
     void event(const Event& e);
     void step();                          // one 50 Hz frame
     const Image& frame() const { return frame_; }
+    // The frame enlarged n times for the window (F8 filter).
+    void scaleFrame(uint32_t* dst, int n, ScaleFilter mode) const { tg::scaleFrame(frame_, dst, n, mode); }
+    void scaleFrame(uint32_t* dst, int w, int h, ScaleFilter mode) const { tg::scaleFrame(frame_, dst, w, h, mode); }   // any size (fullscreen)
     // Renders `frames` stereo frames (interleaved int16, 44100 Hz) of the current music: song 1 (continuously). Call from the audio thread/loop of the window layer; the game itself never needs it.
     void audio(int16_t* out, int frames);
     int song() const { return song_; }
-    bool musicMuted() const { return muted_; }          // M: off, M again: back to 25%
-    int musicOverride() const { return musicOverride_; }   // F2 toggles between the two songs (1 = normal stages, 2 = bonus stage); 0 = automatic
+    bool musicMuted() const { return !musicOn_; }       // M (during a stage): song stopped; M again: started from the beginning
+    int musicSong() const { return songSel_; }          // song chosen with F2 (1 at start-up; the original never changes it by itself)
 
     // High scores (the original keeps them on a "scoredisk"; here in a small file managed by the window layer):
     const HighScores& highScores() const { return scores_; }
@@ -106,7 +110,8 @@ private:
     std::string typed_, pwShown_;
     Music music_[2];
     std::vector<uint8_t> musicImage_[2];
-    int song_ = 0, musicOverride_ = 0;
+    int song_ = 0, songSel_ = 1, musicGen_ = 0, songGen_ = 0;
+    bool musicOn_ = true;
     bool muted_ = false, quit_ = false, scoresDirty_ = false;
     // End of a game (Esc during a stage or the bonus stage, or the time running out): "PLAY WITH SCOREDISK" (YES / NO, no way back).
     // NO: the table (A for novice, B for expert: names and points only) is only shown. YES: "CREATE NEW SCORE DISK" -
@@ -124,6 +129,10 @@ private:
     int pauseFx_ = -1, panelFx_ = -1;
     int bonusBase_ = 25;   // bonus counter at the start of the stage: 25 x stage, 0 when the stage was bought again
     void leaveTwoPlayer();
+    std::vector<size_t> drawOrder() const;   // placed pieces in the order they are drawn (slot order of the original)
+    bool fitsBoard(int x, int y) const;      // the held piece may be put down at (x, y)
+    void gameOver(bool fromBonus);   // end of a game: score disk question (first time only), then the table
+    bool askedDisk_ = false, useDisk_ = false, pendingContinue_ = false;
     int pendingEntry_ = -1;   // two players: the player who enters his name after the first one
     int stagesDone_[2]{};   // stages completed by each player in this game (the bonus stage comes after every 10th)
     bool bonusDue_ = false;
@@ -138,7 +147,8 @@ private:
     std::vector<ScoreEntry>& table() { return expert_ ? scores_.b : scores_.a; }
     // Song 1 plays without a break from the logo through the menu and all levels (checked against the reference port's register
     // trace). Song 2 is loaded by the original too but is not used there; the user says it belongs to the bonus stage (not implemented).
-    int wantedSong() const { return musicOverride_ ? musicOverride_ : (mode_ == Mode::Bonus ? 2 : 1); }
+    // the original plays the chosen song everywhere (0x104c52 never touches the music); by the user's wish the bonus stage plays song 2
+    int wantedSong() const { return !musicOn_ ? 0 : mode_ == Mode::Bonus ? 2 : songSel_; }
     Image thalion_;
     int introStage_ = 0, introFrame_ = 0, menuFade_ = 0;
     int startFade_ = -1;       // menu -> game: fade-out of the menu (frames), -1 = not running

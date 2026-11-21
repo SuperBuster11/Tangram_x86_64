@@ -1,6 +1,7 @@
 // Linux window layer (Xlib): opens a scaled window, feeds Events to tg::Game at 50 Hz.
 // usage: tangram_x11 [game.adf] [--scale N] [--frames N [--shot out.png] [--wav out.wav]] [--audio-stdout]
-//   F7 cycles the window size (960x600, 1280x800, ... up to the screen); F8 cycles the filter (off / sharper / smoothed)
+//   F5 cycles the window size (1280x800, 1600x1000, ... up to the screen); F8 cycles the filter (1084S -> CRT -> smoothed -> off);
+//   F11 / Alt+Enter: fullscreen (16:10 picture as large as the monitor allows, black bars around it)
 //   --frames: exit after N frames, optionally saving a PNG and the audio as a WAV file
 //   --audio-stdout: write the audio as raw 16-bit stereo 44100 Hz to stdout (play with: ... | aplay -f S16_LE -r 44100 -c 2)
 #include <X11/Xlib.h>
@@ -26,7 +27,7 @@
 int main(int argc, char** argv) {
     // The game data is compiled in; a disk image given as the first argument (not starting with "--") overrides it.
     const char* adfPath = argc >= 2 && std::strncmp(argv[1], "--", 2) ? argv[1] : nullptr;
-    int scale = 3, maxFrames = -1; const char* shot = nullptr; const char* wavPath = nullptr; bool audioStdout = false;
+    int scale = 4, maxFrames = -1; const char* shot = nullptr; const char* wavPath = nullptr; bool audioStdout = false;
     for (int i = adfPath ? 2 : 1; i < argc; i++) {
         if (!std::strcmp(argv[i], "--scale") && i + 1 < argc) scale = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--frames") && i + 1 < argc) maxFrames = std::atoi(argv[++i]);
@@ -45,15 +46,17 @@ int main(int argc, char** argv) {
     Display* dpy = XOpenDisplay(nullptr);
     if (!dpy) { std::fprintf(stderr, "cannot open X display\n"); return 1; }
     int scr = DefaultScreen(dpy);
-    // F7 cycles the window size through 960x600, 1280x800, ... up to the largest multiple of 320x200 that fits the screen
-    int maxScale = 2;
+    // F5 cycles the window size through 1280x800, 1600x1000, ... up to the largest multiple of 320x200 that fits the screen
+    const int minScale = 4;   // 1280x800 is the smallest window
+    int maxScale = minScale;
     while (320 * (maxScale + 1) <= DisplayWidth(dpy, scr) && 200 * (maxScale + 1) <= DisplayHeight(dpy, scr) - 80) maxScale++;
-    const int minScale = maxScale >= 3 ? 3 : 2;   // 960x600 is the smallest size (unless the screen is too small)
     scale = std::max(minScale, std::min(scale, maxScale));
-    tg::ScaleFilter filter = tg::ScaleFilter::Off;
-    int W = 320 * scale, H = 200 * scale;
+    tg::ScaleFilter filter = tg::ScaleFilter::Monitor1084;   // F8: 1084S -> CRT -> smoothed -> off
+    int W = 320 * scale, H = 200 * scale;   // window (client) size
+    int VX = 0, VY = 0, VW = W, VH = H;     // the picture inside it (16:10, centred; black bars in fullscreen)
+    bool fullscreen = false;
     Window win = XCreateSimpleWindow(dpy, RootWindow(dpy, scr), (DisplayWidth(dpy, scr) - W) / 2, (DisplayHeight(dpy, scr) - H) / 2, W, H, 0, 0, BlackPixel(dpy, scr));   // centred on the screen
-    XStoreName(dpy, win, "Tangram");
+    XStoreName(dpy, win, sizeof(void*) == 8 ? "Tangram 64-bit" : "Tangram 32-bit");   // same titles as the Windows builds
     {   // window icon (_NET_WM_ICON: width, height, then ARGB pixels as longs)
         std::vector<unsigned long> ic; ic.push_back(64); ic.push_back(64);
         for (uint32_t v : kIcon64) ic.push_back(v);
@@ -69,6 +72,26 @@ int main(int argc, char** argv) {
     std::vector<uint32_t> pix(size_t(W) * H);
     XImage* img = XCreateImage(dpy, vis, depth, ZPixmap, 0, reinterpret_cast<char*>(pix.data()), W, H, 32, 0);
     GC gc = XCreateGC(dpy, win, 0, nullptr);
+    XSetForeground(dpy, gc, BlackPixel(dpy, scr));
+    auto layout = [&](int cw, int ch) {   // new window size: largest 16:10 picture that fits, new image buffer
+        W = std::max(1, cw); H = std::max(1, ch);
+        VW = W; VH = W * 200 / 320;
+        if (VH > H) { VH = H; VW = H * 320 / 200; }
+        VW = std::max(1, VW); VH = std::max(1, VH); VX = (W - VW) / 2; VY = (H - VH) / 2;
+        img->data = nullptr; XDestroyImage(img);
+        pix.assign(size_t(VW) * VH, 0);
+        img = XCreateImage(dpy, vis, depth, ZPixmap, 0, reinterpret_cast<char*>(pix.data()), VW, VH, 32, 0);
+        XFillRectangle(dpy, win, gc, 0, 0, unsigned(W), unsigned(H));
+    };
+    auto toggleFullscreen = [&] {   // EWMH: ask the window manager for _NET_WM_STATE_FULLSCREEN
+        fullscreen = !fullscreen;
+        XEvent x = {}; x.type = ClientMessage; x.xclient.window = win; x.xclient.format = 32;
+        x.xclient.message_type = XInternAtom(dpy, "_NET_WM_STATE", False);
+        x.xclient.data.l[0] = fullscreen ? 1 : 0; x.xclient.data.l[1] = long(XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False)); x.xclient.data.l[3] = 1;
+        XSendEvent(dpy, RootWindow(dpy, scr), False, SubstructureRedirectMask | SubstructureNotifyMask, &x);
+    };
+    auto gameX = [&](int x) { return std::max(0, std::min(319, (x - VX) * 320 / VW)); };
+    auto gameY = [&](int y) { return std::max(0, std::min(199, (y - VY) * 200 / VH)); };
 
     std::vector<int16_t> pcm, chunk(2 * 882);   // 882 stereo frames = 20 ms at 44100 Hz
     auto next = std::chrono::steady_clock::now();
@@ -79,21 +102,22 @@ int main(int argc, char** argv) {
             XEvent ev; XNextEvent(dpy, &ev);
             tg::Event e;
             if (ev.type == ClientMessage && Atom(ev.xclient.data.l[0]) == del) running = false;
-            else if (ev.type == KeyPress && XLookupKeysym(&ev.xkey, 0) == XK_F7) {   // next size, back to the smallest after the largest
+            else if (ev.type == ConfigureNotify && (ev.xconfigure.width != W || ev.xconfigure.height != H)) layout(ev.xconfigure.width, ev.xconfigure.height);
+            else if (ev.type == Expose) XFillRectangle(dpy, win, gc, 0, 0, unsigned(W), unsigned(H));
+            else if (ev.type == KeyPress && (XLookupKeysym(&ev.xkey, 0) == XK_F11 || (XLookupKeysym(&ev.xkey, 0) == XK_Return && (ev.xkey.state & Mod1Mask)))) toggleFullscreen();
+            else if (ev.type == KeyPress && XLookupKeysym(&ev.xkey, 0) == XK_F5) {   // next size, back to the smallest after the largest
+                if (fullscreen) continue;
                 scale = scale >= maxScale ? minScale : scale + 1;
-                W = 320 * scale; H = 200 * scale;
-                img->data = nullptr; XDestroyImage(img);
-                pix.assign(size_t(W) * H, 0);
-                img = XCreateImage(dpy, vis, depth, ZPixmap, 0, reinterpret_cast<char*>(pix.data()), W, H, 32, 0);
+                layout(320 * scale, 200 * scale);
                 XResizeWindow(dpy, win, unsigned(W), unsigned(H));
                 XMoveWindow(dpy, win, std::max(0, (DisplayWidth(dpy, scr) - W) / 2), std::max(0, (DisplayHeight(dpy, scr) - H) / 2));
             }
             else if (ev.type == KeyPress && XLookupKeysym(&ev.xkey, 0) == XK_F8) filter = tg::nextFilter(filter);
-            else if (ev.type == MotionNotify) { e.type = tg::Event::Move; e.x = ev.xmotion.x / scale; e.y = ev.xmotion.y / scale; game.event(e); }
+            else if (ev.type == MotionNotify) { e.type = tg::Event::Move; e.x = gameX(ev.xmotion.x); e.y = gameY(ev.xmotion.y); game.event(e); }
             else if (ev.type == ButtonPress || ev.type == ButtonRelease) {
                 if (ev.xbutton.button != 1 && ev.xbutton.button != 3) continue;
                 e.type = ev.type == ButtonPress ? tg::Event::Down : tg::Event::Up;
-                e.x = ev.xbutton.x / scale; e.y = ev.xbutton.y / scale; e.button = ev.xbutton.button == 3;
+                e.x = gameX(ev.xbutton.x); e.y = gameY(ev.xbutton.y); e.button = ev.xbutton.button == 3;
                 game.event(e);
             } else if (ev.type == KeyPress) {
                 KeySym ks = XLookupKeysym(&ev.xkey, 0);
@@ -123,8 +147,8 @@ int main(int argc, char** argv) {
             if (audioStdout) std::fwrite(chunk.data(), 2, chunk.size(), stdout);
         }
         const tg::Image& f = game.frame();
-        tg::scaleFrame(f, pix.data(), scale, filter);
-        XPutImage(dpy, win, gc, img, 0, 0, 0, 0, W, H);
+        game.scaleFrame(pix.data(), VW, VH, filter);
+        XPutImage(dpy, win, gc, img, 0, 0, VX, VY, unsigned(VW), unsigned(VH));
         XFlush(dpy);
         if (maxFrames >= 0 && ++frames >= maxFrames) {
             if (shot) tg::writePng(shot, f, 1);

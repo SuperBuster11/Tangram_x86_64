@@ -21,10 +21,14 @@
 #include "scale_filter.hpp"
 
 static tg::Game g_game;
-static int g_scale = 3;        // window size = 320x200 times this; F7 cycles 3 .. g_maxScale (960x600 and up)
-static int g_maxScale = 2;
-static tg::ScaleFilter g_filter = tg::ScaleFilter::Off;   // F8
-static int minScale() { return g_maxScale >= 3 ? 3 : 2; }
+static const char* const kTitle = sizeof(void*) == 8 ? "Tangram 64-bit" : "Tangram 32-bit";   // window title: Tangram_x64.exe / Tangram_x86.exe
+static int g_scale = 4;        // window size = 320x200 times this (starts at 1280x800); F5 cycles 4 .. g_maxScale
+static int g_maxScale = 4;
+static tg::ScaleFilter g_filter = tg::ScaleFilter::Monitor1084;   // F8: 1084S -> CRT -> smoothed -> off
+static int minScale() { return 4; }   // 1280x800 is the smallest window
+static bool g_fullscreen = false;     // F11 / Alt+Enter: borderless window over the whole monitor, picture 16:10 as large as fits
+static WINDOWPLACEMENT g_placement = {sizeof(WINDOWPLACEMENT)};
+static RECT g_view = {0, 0, 1, 1};    // where the picture is drawn in the client area (black bars around it in fullscreen)
 static std::vector<uint32_t> g_pix;
 static std::recursive_mutex g_lock;            // the game is touched by the window thread and the audio thread
 static std::atomic<bool> g_quit{false};
@@ -70,8 +74,8 @@ static SIZE outerSize(int n) {
 }
 
 static void computeMaxScale() {   // the largest size that still fits the work area of the screen
-    RECT wa = workArea(); g_maxScale = 2;
-    for (int n = 3;; n++) {
+    RECT wa = workArea(); g_maxScale = 4;   // never below 1280x800
+    for (int n = 4;; n++) {
         SIZE s = outerSize(n);
         if (s.cx > wa.right - wa.left || s.cy > wa.bottom - wa.top) break;
         g_maxScale = n;
@@ -84,24 +88,53 @@ static void setScale(HWND h, int n) {   // resizes the window and centres it in 
     SetWindowPos(h, nullptr, wa.left + (wa.right - wa.left - s.cx) / 2, wa.top + (wa.bottom - wa.top - s.cy) / 2, s.cx, s.cy, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+// The largest 16:10 rectangle that fits the client area, centred (the whole client area for the F5 window sizes).
+static RECT viewRect(int cw, int ch) {
+    int w = cw, h = cw * 200 / 320;
+    if (h > ch) { h = ch; w = ch * 320 / 200; }
+    const int x = (cw - w) / 2, y = (ch - h) / 2;
+    return RECT{x, y, x + std::max(1, w), y + std::max(1, h)};
+}
+
 static void present(HDC dc, int cw, int ch) {
-    const tg::Image& f = g_game.frame();
-    const int n = std::max(1, std::min(cw / 320, ch / 200));   // integer factor of the window; the rest is stretched 1:1 -> exact for F7 sizes
-    g_pix.resize(size_t(320 * n) * 200 * n);
-    tg::scaleFrame(f, g_pix.data(), n, g_filter);
+    g_view = viewRect(cw, ch);
+    const int w = g_view.right - g_view.left, h = g_view.bottom - g_view.top;
+    g_pix.resize(size_t(w) * h);
+    g_game.scaleFrame(g_pix.data(), w, h, g_filter);   // filtered directly at the final size (no stretching afterwards)
     BITMAPINFO bi = {};
-    bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = 320 * n; bi.bmiHeader.biHeight = -200 * n;
+    bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = w; bi.bmiHeader.biHeight = -h;
     bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
-    SetStretchBltMode(dc, COLORONCOLOR);
-    StretchDIBits(dc, 0, 0, cw, ch, 0, 0, 320 * n, 200 * n, g_pix.data(), &bi, DIB_RGB_COLORS, SRCCOPY);
+    SetDIBitsToDevice(dc, g_view.left, g_view.top, DWORD(w), DWORD(h), 0, 0, 0, UINT(h), g_pix.data(), &bi, DIB_RGB_COLORS);
+    // black bars
+    if (g_view.top > 0) PatBlt(dc, 0, 0, cw, g_view.top, BLACKNESS);
+    if (g_view.bottom < ch) PatBlt(dc, 0, g_view.bottom, cw, ch - g_view.bottom, BLACKNESS);
+    if (g_view.left > 0) PatBlt(dc, 0, g_view.top, g_view.left, h, BLACKNESS);
+    if (g_view.right < cw) PatBlt(dc, g_view.right, g_view.top, cw - g_view.right, h, BLACKNESS);
+}
+
+static void toggleFullscreen(HWND h) {
+    if (!g_fullscreen) {
+        MONITORINFO mi = {sizeof mi};
+        if (!GetWindowPlacement(h, &g_placement) || !GetMonitorInfoA(MonitorFromWindow(h, MONITOR_DEFAULTTOPRIMARY), &mi)) return;
+        SetWindowLongA(h, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowPos(h, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+        g_fullscreen = true;
+    } else {
+        SetWindowLongA(h, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+        SetWindowPlacement(h, &g_placement);
+        SetWindowPos(h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        g_fullscreen = false;
+    }
+    InvalidateRect(h, nullptr, FALSE);
 }
 
 static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     RECT rc; GetClientRect(h, &rc);
     int cw = rc.right ? rc.right : 1, ch = rc.bottom ? rc.bottom : 1;
-    auto mx = [&] { return int(short(LOWORD(l))) * 320 / cw; };
-    auto my = [&] { return int(short(HIWORD(l))) * 200 / ch; };
+    // window position -> game pixel, through the picture rectangle (outside it: clamped to the edge)
+    auto mx = [&] { g_view = viewRect(cw, ch); return std::max(0, std::min(319, (int(short(LOWORD(l))) - int(g_view.left)) * 320 / std::max(1, int(g_view.right - g_view.left)))); };
+    auto my = [&] { g_view = viewRect(cw, ch); return std::max(0, std::min(199, (int(short(HIWORD(l))) - int(g_view.top)) * 200 / std::max(1, int(g_view.bottom - g_view.top)))); };
     tg::Event e;
     switch (m) {
     case WM_MOUSEMOVE: e.type = tg::Event::Move; e.x = mx(); e.y = my(); g_game.event(e); return 0;
@@ -110,12 +143,14 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         e.x = mx(); e.y = my(); e.button = (m == WM_RBUTTONDOWN || m == WM_RBUTTONUP);
         if (e.type == tg::Event::Down) SetCapture(h); else ReleaseCapture();   // the release is delivered even outside the window
         g_game.event(e); return 0;
-    case WM_SYSKEYDOWN:   // F10 arrives as a system key in Windows
+    case WM_SYSKEYDOWN:   // F10 and Alt+key arrive as system keys in Windows
+        if (w == VK_RETURN && (l & (1 << 29))) { if (!(l & (1 << 30))) toggleFullscreen(h); return 0; }   // Alt+Enter (not auto-repeat)
         if (w != VK_F10) break;
         e.type = tg::Event::Key; e.key = tg::kKeyF1 + 9; g_game.event(e); return 0;
     case WM_KEYDOWN:
-        if (w == VK_F7) { setScale(h, g_scale >= g_maxScale ? minScale() : g_scale + 1); return 0; }
-        if (w == VK_F8) { g_filter = tg::nextFilter(g_filter); return 0; }   // filter: off / sharper / smoothed   // next window size
+        if (w == VK_F11) { if (!(l & (1 << 30))) toggleFullscreen(h); return 0; }   // fullscreen on / off
+        if (w == VK_F5) { if (!g_fullscreen) setScale(h, g_scale >= g_maxScale ? minScale() : g_scale + 1); return 0; }   // next window size
+        if (w == VK_F8) { g_filter = tg::nextFilter(g_filter); return 0; }   // filter: 1084S -> CRT -> smoothed -> off
         e.type = tg::Event::Key;
         if (w == VK_RETURN) e.key = tg::kKeyEnter; else if (w == VK_ESCAPE) e.key = tg::kKeyEsc; else if (w == VK_BACK) e.key = tg::kKeyBackspace;
         else if (w == VK_SPACE) e.key = ' ';
@@ -123,6 +158,7 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         else if (w >= '0' && w <= '9') e.key = int(w); else if (w >= 'A' && w <= 'Z') e.key = int(w);
         else if (w >= VK_NUMPAD0 && w <= VK_NUMPAD9) e.key = int('0' + (w - VK_NUMPAD0)); else break;
         g_game.event(e); return 0;
+    case WM_SYSCHAR: if (w == VK_RETURN) return 0; break;   // no beep after Alt+Enter
     case WM_CHAR:   // punctuation for the high-score name (letters, digits and space come from WM_KEYDOWN)
         if (w >= 33 && w <= 95 && !((w >= '0' && w <= '9') || (w >= 'A' && w <= 'Z'))) { e.type = tg::Event::Key; e.key = int(w); g_game.event(e); }
         return 0;
@@ -141,7 +177,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR cmd, int show) {
     tg::Adf adf; std::string err;
     bool loaded = true;
     if (path.empty()) tg::loadEmbeddedAssets(adf); else loaded = adf.loadFile(path, err);
-    if (!loaded || !g_game.init(adf, err)) { MessageBoxA(nullptr, err.c_str(), "Tangram", MB_ICONERROR); return 1; }
+    if (!loaded || !g_game.init(adf, err)) { MessageBoxA(nullptr, err.c_str(), kTitle, MB_ICONERROR); return 1; }
     { std::ifstream in("tangram.sco", std::ios::binary); if (in) g_game.loadScores(tg::Bytes(std::istreambuf_iterator<char>(in), {})); }
     WNDCLASSA wc = {}; wc.lpfnWndProc = proc; wc.hInstance = inst; wc.lpszClassName = "TangramWnd"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIconA(inst, MAKEINTRESOURCEA(1));   // icon from assets/tangram.rc
@@ -149,7 +185,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR cmd, int show) {
     computeMaxScale();
     g_scale = std::max(minScale(), std::min(g_scale, g_maxScale));
     SIZE sz = outerSize(g_scale); RECT wa = workArea();
-    HWND h = CreateWindowA("TangramWnd", "Tangram", WS_OVERLAPPEDWINDOW | WS_VISIBLE, wa.left + (wa.right - wa.left - sz.cx) / 2, wa.top + (wa.bottom - wa.top - sz.cy) / 2, sz.cx, sz.cy, nullptr, nullptr, inst, nullptr);
+    HWND h = CreateWindowA("TangramWnd", kTitle, WS_OVERLAPPEDWINDOW | WS_VISIBLE, wa.left + (wa.right - wa.left - sz.cx) / 2, wa.top + (wa.bottom - wa.top - sz.cy) / 2, sz.cx, sz.cy, nullptr, nullptr, inst, nullptr);
+    {   // the smallest window (1280x800) does not fit this screen: start in fullscreen
+        SIZE need = outerSize(minScale());
+        if (need.cx > wa.right - wa.left || need.cy > wa.bottom - wa.top) toggleFullscreen(h);
+    }
     ShowCursor(FALSE);
     timeBeginPeriod(1);
     SetTimer(h, 1, 20, nullptr);   // 50 Hz (the timer is coarse; good enough for a first version)
