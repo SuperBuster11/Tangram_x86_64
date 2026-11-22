@@ -441,7 +441,7 @@ void Game::event(const Event& e) {
         if (paused_) break;
         if (e.type == Event::Key) {
             if (e.key == ' ' || e.key == 'P') { paused_ = true; pauseFx_ = 0; holding_ = false; held_ = nullptr; }
-            else if (e.key == kKeyEsc) { holding_ = false; held_ = nullptr; gameOver(false); }
+            else if (e.key == kKeyEsc || e.key == 'E') { holding_ = false; held_ = nullptr; gameOver(false); }   // 0x10067e: E in the original, Esc kept (user)
             break;
         }
         if (paused_) break;

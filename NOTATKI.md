@@ -703,3 +703,26 @@ Rozwiązanie etapu 2 odczytane ze zrzutu użytkownika (klasyfikacja kolorów klo
 ## Etap 69 – obrót przy przytrzymanym PPM (decyzja użytkownika)
 - Użytkownik pamięta obracanie przy przytrzymaniu PPM. W kodzie tej wersji (0x101bf4) obrót jest przy licznik < 1 lub > 8, a licznik zatrzymuje się na 3 – autopowtarzanie nigdy nie rusza (najpewniej pomyłka autora). Na życzenie użytkownika (wariant „wolniejsze tempo”): pierwszy krok przy wciśnięciu, kolejny po 12 klatkach, potem co 6 klatek; puszczenie przerywa. Świadome odstępstwo. Test w test_game.
 - Poprawka kompilacji (MSVC): game.hpp nie dołączał <array> (GCC miał go pośrednio) – dodane; każdy nagłówek sprawdzony osobno.
+- Użytkownik potwierdził (WinUAE): długość ściemniania i tempo odliczania premii po ułożeniu są w porządku – zostają (25 klatek, 156 klatek).
+
+## Etap 70 – przegląd kodu (część 4, koniec)
+- 0x102958 – rysowanie położonego elementu: kształt bazowy obrócony (0x102ad6), x = środek + x, y = środek − y (oś y kształtu w górę), wielokąt – zgodne z pieceOutline/placedOutline (sprawdzone wcześniej pikselowo).
+- 0x104190 – panel hasła: tekst w (26,91), numer etapu w (178,91), hasło w (94,103), efekt panelu, czeka na puszczenie przycisku i pusty bufor klawiatury, potem dowolny przycisk lub klawisz – zgodne (Etap 56).
+- 0x10433e – pauza: panel DAT 8 w (12,67), efekt, koniec spacją albo przyciskiem myszy – zgodne (port przyjmuje też P).
+- 0x10067e – klawisze w etapie: E = koniec gry, spacja = pauza, M = muzyka, CSI = utwór. **Uzupełnienie:** port przyjmuje teraz także E (oprócz Esc, który zostaje na życzenie użytkownika).
+- 0x103c7e – PLAY AGAIN: prostokąty YES/NO (y 106..113; x 86..110 / 118..142), koszt 2 × 25 × etap, dwóch graczy – zgodne z Etapami 46–47 i 51.
+- 0x104c52 (bonus) i 0x105e7a (wczytanie ekranu tabeli) – przejrzane w Etapach 44 i 56; ekrany tabeli zgodne ze zrzutami w 100%.
+- Przegląd kodu gry (0x100008..0x10754c) zakończony.
+
+### Świadome odstępstwa od oryginału (decyzje użytkownika)
+- Przeciąganie elementów (oryginał: „klik – klik”); puszczenie poza polem odsyła element na tackę.
+- Esc kończy grę (oryginał: E – działa też); P pauzuje (oryginał: tylko spacja); Esc w etapie bonusowym.
+- Utwór 2 w etapie bonusowym (oryginał gra dalej utwór 1); muzyka z plików WAV, jeśli są.
+- Obrót przy przytrzymanym PPM (w tej wersji kodu powtarzanie nie działa).
+- Hasła z listy użytkownika różniące się jedną cyfrą też są przyjmowane.
+- Okno, filtry, pełny ekran, ikona, tytuł – dodatki portu.
+
+## Etap 71 – dźwięk w wersji na Linuksa
+- Okno X11 grało muzykę tylko przez --wav / --audio-stdout. Nowe src/audio_linux.*: PulseAudio (także PipeWire) przez libpulse-simple.so.0, inaczej ALSA przez libasound.so.2 – obie ładowane dlopen w czasie działania (własne deklaracje kilku funkcji, bez nagłówków i bez zależności przy kompilacji; CMake linkuje tylko dl i wątki). 44100 Hz, 16-bit stereo; PulseAudio ~60 ms bufora, ALSA 80 ms z odzyskiwaniem po niedoborze; komunikaty ALSA wyciszone.
+- Wątek dźwięku renderuje po 512 klatek (Game::audio pod wspólną blokadą z pętlą gry) i czeka w zapisie do urządzenia; dodatkowo nie wyprzedza czasu rzeczywistego o więcej niż 150 ms (urządzenia, które nie blokują). --mute wyłącza dźwięk; przy --frames/--wav/--audio-stdout urządzenie nie jest otwierane.
+- Sprawdzone tutaj: brak urządzenia → komunikat i cisza (2 ms), ALSA z urządzeniem null → „sound: ALSA”, gra działa. Prawdziwego odtwarzania nie da się tu usłyszeć – do sprawdzenia u użytkownika.

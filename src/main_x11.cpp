@@ -1,9 +1,10 @@
 // Linux window layer (Xlib): opens a scaled window, feeds Events to tg::Game at 50 Hz.
-// usage: tangram_x11 [game.adf] [--scale N] [--frames N [--shot out.png] [--wav out.wav]] [--audio-stdout]
+// usage: tangram_x11 [game.adf] [--scale N] [--frames N [--shot out.png] [--wav out.wav]] [--audio-stdout] [--mute]
 //   F5 cycles the window size (1280x800, 1600x1000, ... up to the screen); F8 cycles the filter (1084S -> CRT -> smoothed -> off);
 //   F11 / Alt+Enter: fullscreen (16:10 picture as large as the monitor allows, black bars around it)
 //   --frames: exit after N frames, optionally saving a PNG and the audio as a WAV file
 //   --audio-stdout: write the audio as raw 16-bit stereo 44100 Hz to stdout (play with: ... | aplay -f S16_LE -r 44100 -c 2)
+//   --mute: no sound. Otherwise the music plays through PulseAudio / PipeWire or ALSA (loaded at run time; none = silent)
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
@@ -17,10 +18,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <atomic>
+#include <mutex>
 #include <thread>
 #include <unistd.h>
 #include <vector>
 
+#include "audio_linux.hpp"
 #include "embedded_assets.hpp"
 #include "game.hpp"
 #include "icon_data.hpp"
@@ -29,13 +33,14 @@
 int main(int argc, char** argv) {
     // The game data is compiled in; a disk image given as the first argument (not starting with "--") overrides it.
     const char* adfPath = argc >= 2 && std::strncmp(argv[1], "--", 2) ? argv[1] : nullptr;
-    int scale = 4, maxFrames = -1; const char* shot = nullptr; const char* wavPath = nullptr; bool audioStdout = false;
+    int scale = 4, maxFrames = -1; const char* shot = nullptr; const char* wavPath = nullptr; bool audioStdout = false, mute = false;
     for (int i = adfPath ? 2 : 1; i < argc; i++) {
         if (!std::strcmp(argv[i], "--scale") && i + 1 < argc) scale = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--frames") && i + 1 < argc) maxFrames = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
         else if (!std::strcmp(argv[i], "--wav") && i + 1 < argc) wavPath = argv[++i];
         else if (!std::strcmp(argv[i], "--audio-stdout")) audioStdout = true;
+        else if (!std::strcmp(argv[i], "--mute")) mute = true;
     }
     tg::Adf adf; std::string err;
     if (adfPath) { if (!adf.loadFile(adfPath, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; } }
@@ -110,10 +115,35 @@ int main(int argc, char** argv) {
     auto gameY = [&](int y) { return std::max(0, std::min(199, (y - VY) * 200 / VH)); };
 
     std::vector<int16_t> pcm, chunk(2 * 882);   // 882 stereo frames = 20 ms at 44100 Hz
+    // sound card: a thread renders the music in 512-frame pieces and blocks in the device's write (the game is shared: one lock)
+    std::mutex gameLock;
+    std::atomic<bool> audioRun{false};
+    tg::LinuxAudio sound;
+    std::thread audioThread;
+    if (!mute && !wavPath && !audioStdout && maxFrames < 0) {
+        std::string backend;
+        if (sound.open(backend)) {
+            audioRun = true;
+            audioThread = std::thread([&] {
+                std::vector<int16_t> buf(2 * 512);
+                const auto t0 = std::chrono::steady_clock::now(); long long written = 0;
+                while (audioRun) {
+                    { std::lock_guard<std::mutex> l(gameLock); game.audio(buf.data(), 512); }
+                    if (!sound.write(buf.data(), 512)) break;
+                    written += 512;
+                    // a device that does not block (e.g. a null sink) must not run the music ahead: stay within 150 ms of real time
+                    const auto due = t0 + std::chrono::microseconds(written * 1000000 / 44100 - 150000);
+                    if (std::chrono::steady_clock::now() < due) std::this_thread::sleep_until(due);
+                }
+            });
+        }
+        std::fprintf(stderr, "sound: %s\n", backend.c_str());
+    }
     auto next = std::chrono::steady_clock::now();
     int frames = 0;
     bool running = true;
     while (running) {
+        std::unique_lock<std::mutex> frameLock(gameLock);   // released before the wait at the end of the frame
         while (XPending(dpy)) {
             XEvent ev; XNextEvent(dpy, &ev);
             tg::Event e;
@@ -180,9 +210,13 @@ int main(int argc, char** argv) {
             }
             break;
         }
+        frameLock.unlock();
         next += std::chrono::milliseconds(20);   // 50 Hz
         std::this_thread::sleep_until(next);
     }
+    audioRun = false;
+    if (audioThread.joinable()) audioThread.join();
+    sound.close();
     img->data = nullptr;   // buffer is owned by `pix`
     XDestroyImage(img);
     XCloseDisplay(dpy);

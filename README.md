@@ -12,7 +12,7 @@ Muzyka jest odtwarzana przez wbudowany interpreter procesora 68000 i emulację u
 | Podniesienie klocka | wciśnij lewy przycisk na klocku (z tacki albo z planszy) i trzymaj |
 | Odłożenie klocka | puść lewy przycisk nad figurą (poza figurą klocek wraca na tackę) |
 | Obrót klocka | prawy przycisk podczas trzymania; przytrzymany obraca dalej (po ok. 0,25 s, potem co 6 klatek) |
-| Pauza / koniec gry (pytanie o scoredisk, potem tabela wyników; także w etapie bonusowym) / wyjście z gry | P / Esc w grze / Esc w menu |
+| Pauza / koniec gry (pytanie o scoredisk, potem tabela wyników; także w etapie bonusowym) / wyjście z gry | spacja lub P / Esc lub E (jak w oryginale) w grze / Esc w menu |
 | Po ukończeniu etapu | klik lub Enter na ekranie z hasłem |
 | Muzyka | M – wyłącz / włącz (25%); F2 – zmiana utworu (cyklicznie) |
 | Rozmiar okna | F5 – kolejno 1280×800, 1600×1000… do największego, który mieści się na ekranie, potem znowu 1280×800 |
@@ -21,7 +21,7 @@ Muzyka jest odtwarzana przez wbudowany interpreter procesora 68000 i emulację u
 
 ## Budowanie
 Linux: `cmake -S . -B build && cmake --build build -j` → `build/tangram_x11 [--scale 4]`
-(wymaga bibliotek X11). Windows (Visual Studio 2022/2026, „Otwórz folder” z CMake): cel `tangram`, uruchomienie
+(wymaga bibliotek X11). Dźwięk: PulseAudio/PipeWire albo ALSA, ładowane przy starcie (libpulse-simple.so.0 / libasound.so.2) – nie są potrzebne do kompilacji; bez nich gra jest cicha (`--mute` wyłącza dźwięk). Windows (Visual Studio 2022/2026, „Otwórz folder” z CMake): cel `tangram`, uruchomienie
 `Tangram_x64.exe` / `Tangram_x86.exe` – zależnie od konfiguracji x64/x86 (bez argumentów; opcjonalnie ścieżka do `.adf` zastępuje wkompilowane dane). Szczegóły: `README_VS2022.txt`.
 
 Testy: `TANGRAM_ADF=/ścieżka/disk.adf ctest --test-dir build --output-on-failure`
