@@ -1,10 +1,10 @@
-; Inno Setup script for Tangram (port of the Amiga game by Thalion, 1991) - version 1.0
+; Inno Setup script for Tangram (port of the Amiga game by Thalion, 1991) - version 1.2
 ; Build the game first (Release x64 -> bin64\Tangram_x64.exe, Release x86 -> bin\Tangram_x86.exe; one of them is enough),
 ; then open this file in Inno Setup 6.3 or newer and press Compile (Ctrl+F9). The installer goes to installer\output\.
 ; On 64-bit Windows the 64-bit exe is installed, on 32-bit Windows the 32-bit one; both are installed as Tangram.exe.
 
 #define AppName "Tangram"
-#define AppVersion "1.0"
+#define AppVersion "1.2"
 #define HaveX64 FileExists(AddBackslash(SourcePath) + "..\bin64\Tangram_x64.exe")
 #define HaveX86 FileExists(AddBackslash(SourcePath) + "..\bin\Tangram_x86.exe")
 #if !HaveX64 && !HaveX86
