@@ -550,10 +550,44 @@ int main(int argc, char** argv) {
         std::printf("expert panel counters equal the real game in %.2f%% of pixels\n", 100.0 * same / tot);
         CHECK(100.0 * same / tot > 97.0);
     }
-    {   // the whole visible tray piece can be picked up, e.g. the lower tip of the diamond (square)
+    {   // 0x103120: count-down after a solved stage: time runs out while the bonus counter grows (score unchanged), then the bonus goes
+        // over to the score in steps of 1000/100/10/1
+        Game gc; CHECK(gc.init(adf, err, false)); gc.startLevel(1);
+        for (int i = 0; i < 30 * gc.stageTick(); i++) gc.step();   // 30 ticks gone
+        play(gc, dir + "/level1_solution.txt");
+        CHECK(gc.mode() == Game::Mode::Password);
+        std::vector<std::array<int, 3>> v;
+        for (int i = 0; i < 160; i++) { v.push_back(gc.shownNumbers()); gc.step(); }
+        const int s0 = v[0][2]; bool phase1 = true, ok = true; int maxB = 0;
+        for (size_t i = 1; i < v.size(); i++) {
+            if (phase1 && v[i][0] == 0 && v[i][1] < v[i - 1][1]) phase1 = false;
+            if (phase1) ok &= v[i][2] == s0 && v[i][1] >= v[i - 1][1] && v[i][0] <= v[i - 1][0];
+            else ok &= v[i][1] <= v[i - 1][1] && v[i][2] >= v[i - 1][2] && v[i][1] + v[i][2] == v[i - 1][1] + v[i - 1][2];
+            maxB = std::max(maxB, v[i][1]);
+        }
+        CHECK(ok && !phase1 && v.back()[1] == 0 && v.back()[2] == gc.score() && maxB == gc.score() - s0 && v[0][1] >= 25 && v[0][1] < 30);
+    }
+    {   // right button held: one step on the press, the next after 12 frames, then every 6 frames; released: no more
+        Game gr; CHECK(gr.init(adf, err, false)); gr.startLevel(1);
+        for (int i = 0; i < 30; i++) gr.step();
+        press(gr, kTray[0][0], kTray[0][1]);
+        Event d; d.type = Event::Down; d.button = 1; d.x = 100; d.y = 100; gr.event(d);
+        CHECK(gr.heldRotation() == 1);
+        for (int i = 0; i < 11; i++) gr.step();
+        CHECK(gr.heldRotation() == 1);
+        gr.step(); CHECK(gr.heldRotation() == 2);
+        for (int i = 0; i < 6; i++) gr.step();
+        CHECK(gr.heldRotation() == 3);
+        Event u = d; u.type = Event::Up; gr.event(u);
+        for (int i = 0; i < 30; i++) gr.step();
+        CHECK(gr.heldRotation() == 3);
+    }
+    {   // 0x101d78: a tray piece is picked up inside its area where the pixel is grey (colours 20..24) or black (0), e.g. the lower tip of
+        // the diamond (y 87) and the bottom corner of the parallelogram (296,147); the parchment around the pieces does nothing
         Game gp; CHECK(gp.init(adf, err, false)); gp.startLevel(1);
-        const int pts[][3] = {{255, 88, 1}, {255, 50, 1}, {238, 68, 1}, {272, 68, 1}, {262, 6, 0}, {300, 86, 2}, {258, 110, 3}, {300, 134, 4}, {312, 128, 4}, {305, 140, 4}};
-        for (const auto& pt : pts) { press(gp, pt[0], pt[1]); CHECK(gp.heldPiece() == pt[2]); release(gp, pt[0], pt[1]); }
+        const int pts[][3] = {{254, 87, 1}, {255, 50, 1}, {238, 68, 1}, {272, 68, 1}, {262, 6, 0}, {300, 86, 2}, {258, 105, 3}, {300, 134, 4}, {312, 128, 4}, {296, 147, 4},
+                              {305, 140, -1}, {254, 88, -1}, {300, 40, -1}};
+        for (const auto& pt : pts) { press(gp, pt[0], pt[1]); if (gp.heldPiece() != pt[2]) std::printf("tray point %d,%d -> %d\n", pt[0], pt[1], gp.heldPiece()); CHECK(gp.heldPiece() == pt[2]); release(gp, pt[0], pt[1]); }
     }
     {   // after any stage the figure and the pieces are gone outside the blinds strip once the password panel opens (tall figures, stages 10 and 20)
         std::vector<Rgb> ref;

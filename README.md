@@ -11,7 +11,7 @@ Muzyka jest odtwarzana przez wbudowany interpreter procesora 68000 i emulację u
 | Hasło do etapu | w menu wpisz 5 cyfr (Backspace kasuje), potem Enter |
 | Podniesienie klocka | wciśnij lewy przycisk na klocku (z tacki albo z planszy) i trzymaj |
 | Odłożenie klocka | puść lewy przycisk nad figurą (poza figurą klocek wraca na tackę) |
-| Obrót klocka | prawy przycisk podczas trzymania |
+| Obrót klocka | prawy przycisk podczas trzymania; przytrzymany obraca dalej (po ok. 0,25 s, potem co 6 klatek) |
 | Pauza / koniec gry (pytanie o scoredisk, potem tabela wyników; także w etapie bonusowym) / wyjście z gry | P / Esc w grze / Esc w menu |
 | Po ukończeniu etapu | klik lub Enter na ekranie z hasłem |
 | Muzyka | M – wyłącz / włącz (25%); F2 – zmiana utworu (cyklicznie) |

@@ -6,6 +6,7 @@
 #include "password_label.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -23,8 +24,9 @@ namespace tg {
 namespace {
 
 // Tray positions of the five piece types (screen pixels; measured in the running game).
-// Pick-up areas of the tray pieces (x0, y0, x1, y1 inclusive), the visible pieces of the panel picture (their whole silhouette, e.g. the lower tip of the diamond)
-const int kTrayBox[kPieceTypes][4] = {{236, 4, 314, 46}, {234, 47, 275, 90}, {275, 47, 315, 88}, {234, 88, 275, 112}, {294, 88, 315, 149}};   // parallelogram down to its bottom corner (y 148; the original: 89..149)
+// 0x101d78: pick-up areas of the tray pieces (x0, y0, x1, y1 inclusive; the original tests x > a AND x < b, y > c AND y < d), and the
+// pixel under the pointer must have colour 0 (outlines, the count digits) or 20..24 (the grey pieces): the parchment does nothing
+const int kTrayBox[kPieceTypes][4] = {{234, 5, 314, 45}, {234, 47, 274, 87}, {274, 47, 314, 87}, {234, 89, 274, 109}, {294, 89, 314, 149}};
 const Pt kTray[kPieceTypes] = {{262, 22}, {255, 72}, {296, 70}, {258, 102}, {305, 104}};
 // Start-up sequence (50 Hz frames): Thalion logo, title picture, credits, then the menu fades in.
 // Hold times follow the Go port (2 x 2.2 s per picture, 4.5 s for the credits); each picture fades in and out.
@@ -279,6 +281,10 @@ bool Game::pickPlaced(int x, int y) {
 }
 
 void Game::trayClick(int x, int y) {
+    if (x < 0 || y < 0 || x >= 320 || y >= 200) return;
+    drawScene();   // the screen without the pointer (the original takes the pointer off before reading the input)
+    const int c = frame_.index[size_t(y) * 320 + size_t(x)];
+    if (c != 0 && (c < 20 || c > 24)) return;
     for (int t = 0; t < kPieceTypes; t++) {
         if (x >= kTrayBox[t][0] && x <= kTrayBox[t][2] && y >= kTrayBox[t][1] && y <= kTrayBox[t][3] && remaining(PieceType(t)) > 0) {
             int inst = 0;   // lowest instance of this type that is not on the board
@@ -441,7 +447,8 @@ void Game::event(const Event& e) {
         if (paused_) break;
         // drag and drop: the left button picks a piece up, releasing it puts it down (only over the figure area; a release
         // outside the figure area sends the piece back to the tray); the right button rotates the held piece
-        if (e.type == Event::Down && e.button == 1) { if (holding_) held_storage_.rot = (held_storage_.rot + 1) % kRotations; }
+        if (e.type == Event::Down && e.button == 1) { rmbHeld_ = true; rmbFrames_ = 0; if (holding_) held_storage_.rot = (held_storage_.rot + 1) % kRotations; }
+        else if (e.type == Event::Up && e.button == 1) rmbHeld_ = false;
         else if (e.type == Event::Down && e.button == 0 && !holding_) { if (!pickPlaced(e.x, e.y)) trayClick(e.x, e.y); }
         else if (e.type == Event::Up && e.button == 0 && holding_) {
             if (e.x < kBoardRight && fitsBoard(e.x, e.y)) drop(e.x, e.y);
@@ -517,7 +524,13 @@ void Game::step() {
     else if (fadeIn_ < kFadeFrames) fadeIn_++;
     if (mode_ == Mode::Play && pauseFx_ >= 0 && ++pauseFx_ >= kPauseFxFrames) pauseFx_ = -1;
     if ((mode_ == Mode::Play || mode_ == Mode::AskReplay) && panelFx_ >= 0 && ++panelFx_ >= kPauseFxFrames) panelFx_ = -1;
-    if (mode_ == Mode::Play && !paused_ && pauseFx_ < 0 && panelFx_ < 0 && fadeIn_ >= kFadeFrames) frames_++;   // the clock starts when the stage has faded in
+    if (mode_ == Mode::Play && !paused_ && pauseFx_ < 0 && panelFx_ < 0 && fadeIn_ >= kFadeFrames) frames_++;
+    // right button held: the piece keeps turning (the user's wish; in this version's code 0x101bf4 the repeat never starts, its counter
+    // stops at 3 before the intended 8): first step on the press, then one step every kRotRepeat frames after kRotDelay frames
+    if (mode_ == Mode::Play && rmbHeld_ && !paused_ && pauseFx_ < 0 && panelFx_ < 0) {
+        ++rmbFrames_;
+        if (holding_ && rmbFrames_ >= kRotDelay && (rmbFrames_ - kRotDelay) % kRotRepeat == 0) held_storage_.rot = (held_storage_.rot + 1) % kRotations;
+    } else if (mode_ != Mode::Play) rmbHeld_ = false;   // the clock starts when the stage has faded in
     if (mode_ == Mode::Play && !paused_ && toFrame_ < 0 && (frames_ / stageTick_) >= 100) { toFrame_ = 0; }   // time is up: the bonus starts counting down
     else if (mode_ == Mode::Play && toFrame_ >= 0 && !paused_ && pauseFx_ < 0) {   // measured in the original: one step per tick (75 frames), the first right at the time-out; blank frame; then the question
         if (++toFrame_ >= timeoutEnd()) {
@@ -655,7 +668,8 @@ void Game::drawScene() {
     text(pics_[kFontUi], kPlayerNo.x, kPlayerNo.y, std::to_string((previewPlayer_ >= 0 ? previewPlayer_ : player_) + 1), play_);
     {   // time bar: the picture is shown from the left; E/2+1 columns are consumed from the right (E = elapsed ticks + 1)
         const DatPicture& bar = pics_[kDatTimeBar];
-        int keep = std::max(0, bar.w - (((frames_ / stageTick_) + 1) / 2 + 1)), from = 0;
+        const int barE = dE_ >= 0 ? dE_ : frames_ / stageTick_;
+        int keep = std::max(0, bar.w - ((barE + 1) / 2 + 1)), from = 0;
         if (dFill_ >= 0) { keep = bar.w; from = std::max(0, bar.w - dFill_); }   // refill: the bar is uncovered from its right end towards the left
         for (int gy = 0; gy < bar.h; gy++)
             for (int gx = from; gx < keep; gx++) {
@@ -868,15 +882,27 @@ void Game::render() {
         else if (fadeIn_ < kFadeFrames) fade(fadeIn_, kFadeFrames);
         return;
     }
+    dE_ = -1;
     dScore_ = score_; dBonus_ = timedOut_ ? 0 : toFrame_ >= 0 ? std::max(0, bonusBase_ - level_ * (toFrame_ / stageTick_ + 1)) : bonusBase_; dTime_ = std::max(0, 100 - (frames_ / stageTick_));
     if (mode_ == Mode::Password) {
-        if (pwFrame_ < kPwCount) {   // bonus count-down: time and bonus run down while the score climbs
-            int t0 = timeAtEnd_, done = std::min(pwFrame_, t0);
-            dTime_ = t0 - done;
-            dScore_ = scoreBefore_ + (t0 > 0 ? gain_ * done / t0 : gain_);
-            dBonus_ = t0 > 0 ? bonusBase_ * (t0 - done) / t0 : 0;
+        if (pwFrame_ < kPwCount) {
+            // 0x103120..0x10347c: first the remaining time runs out in steps of 2 (1 at 98) while every step adds stage/2+1 to the
+            // bonus counter (the score stays); then the bonus counter goes over to the score in steps of 1000, 100, 10 or 1 (the
+            // largest that fits). The original takes as long as its CPU needs; here the steps are spread over the measured 156 frames.
+            std::vector<std::array<int, 4>> seq;   // time shown, bonus counter, score, E after each step
+            int e = timeAtEnd_ > 0 ? 100 - timeAtEnd_ : 101, b = gain_;   // solved after the time-out: no time left, only the transfer
+            {   // bonus counter at the start of the count-down: the total less the steps still to come
+                int steps = 0; for (int k = e; k < 101; k += (k == 98) ? 1 : 2) steps++;
+                b = gain_ - steps * bonusPerStep(level_);
+            }
+            seq.push_back({std::max(0, 100 - e), b, scoreBefore_, e});
+            while (e < 101) { e += (e == 98) ? 1 : 2; b += bonusPerStep(level_); seq.push_back({std::max(0, 100 - e), b, scoreBefore_, e}); }
+            int sc = scoreBefore_;
+            while (b > 0) { const int c = b >= 1000 ? 1000 : b >= 100 ? 100 : b >= 10 ? 10 : 1; b -= c; sc += c; seq.push_back({0, b, sc, e}); }
+            const size_t k = std::min(seq.size() - 1, size_t(pwFrame_) * seq.size() / size_t(kPwCount * 4 / 5));   // done after 4/5 of the time, then held
+            dTime_ = seq[k][0]; dBonus_ = seq[k][1]; dScore_ = seq[k][2]; dE_ = seq[k][3];   // the time bar runs out with E too
         } else {
-            dBonus_ = 0; dTime_ = 0;
+            dBonus_ = 0; dTime_ = 0; dE_ = 101;
         }
         if (beyond_) {   // after stage 200: the finished scene fades to black once the bonus has been counted
             if (pwFrame_ >= kPwCount) { dBonus_ = 0; dTime_ = 0; }

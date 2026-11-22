@@ -1,6 +1,7 @@
 // Platform-independent game: menu, play screen, password screen. 320x200 frame, 50 Hz steps.
 // Input arrives as Events (mouse in game pixels); the window layers (X11 / Win32) only translate and scale.
 #pragma once
+#include <array>
 #include <random>
 #include <string>
 #include <vector>
@@ -43,6 +44,8 @@ public:
     // is played from its start whenever the emulated song would start, and repeats from the start at its end; volume as the
     // emulated song (25%). Without a recording the original music player is emulated. Returns false (and leaves the song) on a bad file.
     bool loadMusicWav(int song, const std::vector<uint8_t>& wav, std::string& err);
+    // time, bonus counter and score as shown on the panel in the last rendered frame (they differ from the real ones during the count-down)
+    std::array<int, 3> shownNumbers() const { return {dTime_, dBonus_, dScore_}; }
     bool musicFromWav(int song) const { return song >= 1 && song <= 2 && !wav_[song - 1].empty(); }
     int song() const { return song_; }
     bool musicMuted() const { return !musicOn_; }       // M (during a stage): song stopped; M again: started from the beginning
@@ -63,6 +66,7 @@ public:
     int scoreOf(int player) const { return player == player_ + 1 ? score_ : playerScore_[player - 1]; }              // 1-based
     int score() const { return score_; }
     int heldPiece() const { return held_ ? int(held_->type) : -1; }
+    int heldRotation() const { return held_ ? held_->rot : -1; }
     size_t placedCount() const { return placed_.size(); }
     int frames() const { return frames_; }
     int stageTick() const { return stageTick_; }
@@ -194,7 +198,9 @@ private:
     int gain_ = 0, scoreBefore_ = 0, timeAtEnd_ = 0;
     int dCounts_[kPieceTypes] = {-1, -1, -1, -1, -1}, dFill_ = -1;   // refill of the panel while a new stage is wiped in: shown piece counts (-1 = real) and time-bar columns (-1 = real)
     void refillPanel(int T, int fullBonus);
-    int dScore_ = 0, dBonus_ = 0, dTime_ = 0;       // numbers shown by drawScene (differ from the real ones during the count-down)
+    int dScore_ = 0, dBonus_ = 0, dTime_ = 0, dE_ = -1;
+    static constexpr int kRotDelay = 12, kRotRepeat = 6;   // right button held: repeat after 12 frames, then every 6 frames
+    bool rmbHeld_ = false; int rmbFrames_ = 0;       // numbers shown by drawScene (differ from the real ones during the count-down)
     // Stage-complete transition (measured on the original, 50 Hz frames after the last piece): ~156 frames of bonus count-down,
     // then the password panel appears through vertical blinds (slat widths below, 6 frames each), then waits for a click and
     // closes the same way while the next stage shows through.
