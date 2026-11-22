@@ -143,6 +143,7 @@ private:
     int pauseFx_ = -1, panelFx_ = -1;
     int bonusBase_ = 25;   // bonus counter at the start of the stage: 25 x stage, 0 when the stage was bought again
     void leaveTwoPlayer();
+    void drawPointer(const DatPicture& pic, const Palette& pal);   // the mouse pointer with its shadow
     std::vector<size_t> drawOrder() const;   // placed pieces in the order they are drawn (slot order of the original)
     bool fitsBoard(int x, int y) const;      // the held piece may be put down at (x, y)
     void gameOver(bool fromBonus);   // end of a game: score disk question (first time only), then the table

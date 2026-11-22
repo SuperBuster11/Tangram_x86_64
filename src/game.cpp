@@ -676,6 +676,24 @@ int Game::transitionFrames(int fx) {
 }
 bool Game::transitionShowsNew(int fx, int x, int y, int frame) { return transitionTime(fx, x, y) <= frame; }
 
+// 0x1073d2 → 0x10f48a: the pointer is a bob drawn with BltMaskBitMapRastPort (minterm $E0) through a mask that also covers the
+// pointer's shape moved 2 px left and 6 px down; there the bob's own pixels are colour 0, so the pointer casts a black shadow
+// (measured on the real screen: the pointer at mouse 90,130 on the scoredisk panel)
+void Game::drawPointer(const DatPicture& pic, const Palette& pal) {
+    const int x0 = mx_ + kCursorOffset.x, y0 = my_ + kCursorOffset.y;
+    for (int gy = 0; gy < pic.h; gy++)
+        for (int gx = 0; gx < pic.w; gx++) {
+            if (!pic.index[size_t(gy) * pic.w + gx]) continue;
+            const int sx = gx - 2, sy = gy + 6;   // shadow pixel, inside the 32 x 24 bob
+            if (sx < 0 || sy >= pic.h) continue;
+            if (pic.index[size_t(sy) * pic.w + sx]) continue;   // the pointer itself is drawn there
+            const int px = x0 + sx, py = y0 + sy;
+            if (px < 0 || py < 0 || px >= 320 || py >= 200) continue;
+            frame_.index[size_t(py) * 320 + px] = 0; frame_.rgb[size_t(py) * 320 + px] = pal.c[0];
+        }
+    blitPicture(frame_, pic, x0, y0, pal);
+}
+
 static bool slatVisible(int x, int b, int w) {
     if (w >= 16) return true;
     int rr = ((x - b + 8) % 16 + 16) % 16 - 8;   // -8..7
@@ -870,7 +888,7 @@ void Game::render() {
             for (size_t k = 0; k < str.size(); k++) drawText(frame_, pics_[kFontLight], pos.x + int(k) * kPwDigitPitch, pos.y, std::string(1, str[k]), title_, true);
         };
         if (!typed_.empty()) ink(kMenuPasswordCode, typed_);
-        blitPicture(frame_, pics_[kDatMenuCursor], mx_ + kCursorOffset.x, my_ + kCursorOffset.y, title_);
+        drawPointer(pics_[kDatMenuCursor], title_);
         fade(startFade_ >= 0 ? kFadeFrames - startFade_ : menuFade_, kFadeFrames);
         return;
     }
@@ -915,7 +933,7 @@ void Game::render() {
             frame_.index[i] = v; frame_.rgb[i] = play_.c[v & 31];
         }
         if (askMode) drawPanelOverlay();
-        blitPicture(frame_, pics_[kDatCursor], mx_ + kCursorOffset.x, my_ + kCursorOffset.y, play_);
+        drawPointer(pics_[kDatCursor], play_);
         if (askMode) { askFade(); return; }
         if (bonusPhase_ == 3) fade(kFadeFrames - bonusEnd_, kFadeFrames);
         else if (fadeIn_ < kFadeFrames) fade(fadeIn_, kFadeFrames);
@@ -1051,7 +1069,7 @@ void Game::render() {
     if (mode_ == Mode::Play && fadeIn_ < kFadeFrames) fade(fadeIn_, kFadeFrames);
     if (mode_ == Mode::Play && toFrame_ >= timeoutBlank()) { fade(0, 1); return; }   // blank frame before the question
     if (mode_ != Mode::Password && !(mode_ == Mode::Play && holding_ && !paused_))   // hidden from the end of the stage until the next one; 0x102872: a piece in hand replaces the pointer
-        blitPicture(frame_, pics_[kDatCursor], mx_ + kCursorOffset.x, my_ + kCursorOffset.y, play_);
+        drawPointer(pics_[kDatCursor], play_);
     if (mode_ == Mode::AskDisk || mode_ == Mode::AskNew || mode_ == Mode::AskFormat) askFade();
 }
 
