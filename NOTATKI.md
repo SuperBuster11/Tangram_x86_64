@@ -741,3 +741,8 @@ Rozwiązanie etapu 2 odczytane ze zrzutu użytkownika (klasyfikacja kolorów klo
 ## Etap 75 – folder wyjściowy bin / bin64, Release bez testów (jak w v2.0)
 - CMakeLists przebudowany jak w Tangram_x86-64_v2.0: gra do bin/ (32-bit) albo bin64/ (64-bit) w folderze projektu, razem z assets/music1.wav i music2.wav (jeśli są); .pdb w folderze kompilacji; RUNTIME_OUTPUT_DIRECTORY_<CONFIG> bez podfolderu Release. TANGRAM_BUILD_TESTS: OFF dla Release/RelWithDebInfo/MinSizeRel, ON dla Debug (testy, narzędzia, pack_assets). Dane gry nadal wkompilowane. .gitignore: bin/, bin64/.
 - Sprawdzone: Release – tylko gra (bin64/tangram_x11 + pliki WAV); Debug – 15 testów przechodzi.
+
+## Etap 76 – instalator (Inno Setup) i zapis wyników w folderze użytkownika
+- installer/tangram.iss: Inno Setup 6.3+; bierze bin64\Tangram_x64.exe i/lub bin\Tangram_x86.exe (preprocesor sprawdza, które są; tylko x64 → instalator tylko dla 64-bit), instaluje jako Tangram.exe, wersja 64-bit na 64-bitowym Windows; polski i angielski kreator, Program Files albo tylko dla użytkownika (PrivilegesRequiredOverridesAllowed=dialog), skróty, deinstalator, uruchomienie po instalacji. Ten sam AppId w v1 i v2.0 – nowsza wersja zastępuje starszą. Wynik: installer/output/Tangram_Setup_vX.exe. Nie testowane tutaj (Inno Setup działa tylko na Windows).
+- Tabela wyników: Windows %APPDATA%\Tangram\tangram.sco (ścieżka szeroka – _wgetenv + std::filesystem, działa z polskimi znakami w nazwie użytkownika), Linux $XDG_DATA_HOME/tangram albo ~/.local/share/tangram; folder tworzony przy zapisie; stary tangram.sco z bieżącego folderu wczytywany, gdy nowego brak. Powód: w Program Files gra nie może pisać obok exe.
+- CMake: przed linkowaniem tworzy bin/ (bin64/), gdyby został usunięty po konfiguracji.
