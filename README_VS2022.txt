@@ -42,3 +42,8 @@ Na Linuksie: cmake + make tangram_x11, ./tangram_x11 [--scale 4].
 Włóż music1.wav (utwór 1) i music2.wav (utwór 2, bonus) do folderu assets\ przed kompilacją – CMake skopiuje je obok
 Tangram_x64.exe / Tangram_x86.exe. Można je też położyć ręcznie obok exe. Bez nich gra emulowaną muzykę z oryginału.
 Uwaga: po dodaniu plików trzeba raz odświeżyć konfigurację CMake (Projekt -> Konfiguruj pamięć podręczną), żeby kopiowanie się włączyło.
+
+--- Gdzie powstaje gra ---
+Gotowa gra trafia do folderu projektu: bin\ (x86: Tangram_x86.exe) albo bin64\ (x64: Tangram_x64.exe), razem z music1.wav /
+music2.wav z assets\, jeśli tam są. W out\build\... zostają tylko pliki robocze kompilacji. Konfiguracje Release nie budują
+testów ani narzędzi (Debug buduje; można to zmienić opcją CMake TANGRAM_BUILD_TESTS=ON/OFF).

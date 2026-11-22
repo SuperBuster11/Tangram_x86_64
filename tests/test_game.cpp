@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -686,8 +687,11 @@ int main(int argc, char** argv) {
             std::ifstream f(dir + "/level10_user.txt"); int t, r, x, y; std::vector<std::array<int,4>> v;
             while (f >> t >> r >> x >> y) v.push_back({t, r, x, y});
             v[4][2] -= 1;   // parallelogram one pixel to the left
-            std::ofstream o("level10_user_shift.txt"); for (auto& a : v) o << a[0] << ' ' << a[1] << ' ' << a[2] << ' ' << a[3] << '\n'; o.close();
-            play(gu, "level10_user_shift.txt");
+            // the shifted layout goes to a temporary file (play() reads a file) that is removed again
+            const std::string tmp = (std::filesystem::temp_directory_path() / "tangram_level10_user_shift.txt").string();
+            std::ofstream o(tmp); for (auto& a : v) o << a[0] << ' ' << a[1] << ' ' << a[2] << ' ' << a[3] << '\n'; o.close();
+            play(gu, tmp);
+            std::remove(tmp.c_str());
             CHECK(gu.mode() == Game::Mode::Password);
         }
         Game g2q; CHECK(g2q.init(adf, err, false));   // stage 10 in two-player mode: no bonus stage

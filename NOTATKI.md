@@ -736,3 +736,8 @@ Rozwiązanie etapu 2 odczytane ze zrzutu użytkownika (klasyfikacja kolorów klo
 ## Etap 73 – cień pod kursorem myszy
 - Zgłoszenie użytkownika: pod kursorem brakuje cienia. Kod: kursor to bob rysowany przez 0x1073d2 → 0x10f48a (graphics BltMaskBitMapRastPort, minterm $E0) przez maskę, która obejmuje także kształt kursora przesunięty o 2 px w lewo i 6 px w dół; w tym miejscu piksele boba mają kolor 0, więc kursor rzuca czarny cień. Port: Game::drawPointer (cień kolorem 0 tam, gdzie przesunięty kształt nie pokrywa samego kursora, potem kursor) – dla kursora gry i kursora menu.
 - Sprawdzone na prawdziwym zrzucie (panel scoredisk, mysz w 90,130): obszar 30×30 wokół kursora zgodny co do piksela.
+- Plik level10_user_shift.txt w katalogu projektu był pozostałością testu (test_game zapisywał go w bieżącym folderze). Usunięty; test zapisuje teraz plik tymczasowy w folderze tymczasowym systemu i go kasuje.
+
+## Etap 75 – folder wyjściowy bin / bin64, Release bez testów (jak w v2.0)
+- CMakeLists przebudowany jak w Tangram_x86-64_v2.0: gra do bin/ (32-bit) albo bin64/ (64-bit) w folderze projektu, razem z assets/music1.wav i music2.wav (jeśli są); .pdb w folderze kompilacji; RUNTIME_OUTPUT_DIRECTORY_<CONFIG> bez podfolderu Release. TANGRAM_BUILD_TESTS: OFF dla Release/RelWithDebInfo/MinSizeRel, ON dla Debug (testy, narzędzia, pack_assets). Dane gry nadal wkompilowane. .gitignore: bin/, bin64/.
+- Sprawdzone: Release – tylko gra (bin64/tangram_x11 + pliki WAV); Debug – 15 testów przechodzi.

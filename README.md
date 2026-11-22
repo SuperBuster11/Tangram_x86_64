@@ -3,6 +3,7 @@
 Przepisanie gry Tangram z Amigi na C++17. Pliki gry (grafika, poziomy, hasła, muzyka – ok. 250 KB z oryginalnej dyskietki)
 są wkompilowane w program (`src/embedded_assets.cpp`), więc obraz dyskietki `.adf` nie jest potrzebny do uruchomienia.
 Muzyka jest odtwarzana przez wbudowany interpreter procesora 68000 i emulację układu Paula.
+Gotowa gra powstaje w folderze projektu: `bin/` (32-bit) albo `bin64/` (64-bit); w folderze kompilacji zostają tylko pliki robocze. Release buduje samą grę (bez testów i narzędzi).
 
 ## Sterowanie
 | Akcja | Sterowanie |
