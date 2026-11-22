@@ -91,6 +91,12 @@ if(WIN32)
     set_target_properties(tangram PROPERTIES OUTPUT_NAME "Tangram_x86")
   endif()
   # builds made before the rename left tangram.exe (and its .pdb/.ilk) in the same folder; CMake never deletes old files, so do it here
+  # assets/music1.wav and assets/music2.wav (recordings of the two songs, optional) are copied next to the exe
+  foreach(w music1.wav music2.wav)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/assets/${w}")
+      add_custom_command(TARGET tangram POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/${w}" "$<TARGET_FILE_DIR:tangram>/${w}")
+    endif()
+  endforeach()
   add_custom_command(TARGET tangram POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E rm -f "$<TARGET_FILE_DIR:tangram>/tangram.exe" "$<TARGET_FILE_DIR:tangram>/tangram.pdb" "$<TARGET_FILE_DIR:tangram>/tangram.ilk"
     VERBATIM)
@@ -100,6 +106,11 @@ else()
     add_executable(tangram_x11 src/main_x11.cpp)
     target_include_directories(tangram_x11 PRIVATE ${X11_INCLUDE_DIR})
     target_link_libraries(tangram_x11 tggame ${X11_LIBRARIES})
+    foreach(w music1.wav music2.wav)
+      if(EXISTS "${CMAKE_SOURCE_DIR}/assets/${w}")
+        add_custom_command(TARGET tangram_x11 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/${w}" "$<TARGET_FILE_DIR:tangram_x11>/${w}")
+      endif()
+    endforeach()
   endif()
 endif()
 

@@ -21,6 +21,8 @@ static void click(Game& g, int x, int y, int b = 0) {
     Event d; d.type = Event::Down; d.x = x; d.y = y; d.button = b; g.event(d);
     Event u = d; u.type = Event::Up; g.event(u);
 }
+// scoredisk question: wait for the fade in, click, wait for the fade out
+static void askClick(Game& g, int x, int y) { for (int i = 0; i < 26; i++) g.step(); click(g, x, y, 0); for (int i = 0; i < 26; i++) g.step(); }
 static void press(Game& g, int x, int y) {   // left button down (picks a piece up)
     Event m; m.type = Event::Move; m.x = x; m.y = y; g.event(m);
     Event d; d.type = Event::Down; d.x = x; d.y = y; d.button = 0; g.event(d);
@@ -144,6 +146,22 @@ int main(int argc, char** argv) {
         gp.event(f); gp.audio(buf, 2000); CHECK(gp.musicSong() == 2 && gp.song() == 2);
         gp.event(f); gp.audio(buf, 2000); CHECK(gp.musicSong() == 1 && gp.song() == 1);
         gp.startBonusStage(2); gp.audio(buf, 2000); CHECK(gp.song() == 2);   // the bonus stage plays song 2 (user's wish; not in the original code)
+        {   // a recording replaces a song: played at 25% from its start, repeated at its end; a bad file is refused
+            auto wav = [](unsigned rate, unsigned ch, const std::vector<int16_t>& smp) {
+                std::vector<uint8_t> d; auto p32 = [&](uint32_t v) { for (int i = 0; i < 4; i++) d.push_back(uint8_t(v >> (8 * i))); };
+                auto p16 = [&](unsigned v) { d.push_back(uint8_t(v)); d.push_back(uint8_t(v >> 8)); };
+                d.insert(d.end(), {'R', 'I', 'F', 'F'}); p32(uint32_t(36 + smp.size() * 2)); d.insert(d.end(), {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
+                p32(16); p16(1); p16(ch); p32(rate); p32(rate * ch * 2); p16(ch * 2); p16(16); d.insert(d.end(), {'d', 'a', 't', 'a'}); p32(uint32_t(smp.size() * 2));
+                for (int16_t v : smp) p16(uint16_t(v));
+                return d;
+            };
+            Game gw; CHECK(gw.init(adf, err, false));
+            CHECK(gw.loadMusicWav(1, wav(44100, 2, {400, -800, 1200, -1600, 2000, -2400}), err) && gw.musicFromWav(1) && !gw.musicFromWav(2));
+            int16_t o[2 * 5]; gw.audio(o, 5);
+            CHECK(o[0] == 100 && o[1] == -200 && o[4] == 500 && o[5] == -600 && o[6] == 100 && o[9] == -400);   // 3 frames, then from the start
+            CHECK(gw.loadMusicWav(2, wav(22050, 1, {4000, 8000}), err));   // mono, half the rate: resampled
+            CHECK(!gw.loadMusicWav(1, std::vector<uint8_t>(40, 0), err));
+        }
         for (int k : {0, 2, 3, 4, 5, 6, 7, 8, 9}) { Event o; o.type = Event::Key; o.key = kKeyF1 + k; gs.event(o); }   // other F keys do nothing
         CHECK(gs.musicSong() == 1);
         CHECK(!gs.quitRequested());
@@ -256,7 +274,7 @@ int main(int argc, char** argv) {
     {
         // panel with the question: compare the panel rectangle with the real screen (text and buttons only; the shadow under the panel differs)
         { Event mv; mv.type = Event::Move; mv.x = 90; mv.y = 130; g.event(mv); }   // the pointer was here in the real screenshot
-        g.step();
+        for (int i = 0; i < 26; i++) g.step();   // 0x104a74: the question fades in
         auto shot = slurp(dir + "/screen_scoredisk.rgb"); int tot = 0, same = 0;
         for (int y = 70; y < 117; y++) for (int x = 12; x < 218; x++) { size_t i = size_t(y * 320 + x); tot++;
             same += g.frame().rgb[i] == Rgb{uint8_t(shot[i * 3]), uint8_t(shot[i * 3 + 1]), uint8_t(shot[i * 3 + 2])}; }
@@ -264,7 +282,9 @@ int main(int argc, char** argv) {
         CHECK(100.0 * same / tot > 99.0);
         g.event(esc);   // Esc does nothing on this panel (as in the original)
         CHECK(g.mode() == Game::Mode::AskDisk);
-        click(g, 130, 108);   // NO: the table is only shown
+        click(g, 130, 108);   // NO: the table is only shown (after the question has faded out)
+        CHECK(g.mode() == Game::Mode::AskDisk);
+        for (int i = 0; i < 25; i++) g.step();
         CHECK(g.mode() == Game::Mode::HighScores);
         for (int i = 0; i < 35; i++) g.step();   // black while the picture loads, then a short fade in
         auto hs = slurp(dir + "/screen_highscores.rgb"); size_t same2 = 0;
@@ -363,9 +383,14 @@ int main(int argc, char** argv) {
         Event e0; e0.type = Event::Key; e0.key = kKeyEsc; gh.event(e0);
         CHECK(gh.mode() == Game::Mode::AskDisk);
         gh.event(e0); CHECK(gh.mode() == Game::Mode::AskDisk);   // Esc again: nothing, there is no way back
-        click(gh, 95, 108);   // YES -> "CREATE NEW SCORE DISK"
+        click(gh, 95, 108); CHECK(gh.mode() == Game::Mode::AskDisk);   // during the fade in: ignored
+        for (int i = 0; i < 25; i++) gh.step();
+        click(gh, 95, 108);   // YES -> "CREATE NEW SCORE DISK" (fade out, fade in)
+        for (int i = 0; i < 25; i++) gh.step();
         CHECK(gh.mode() == Game::Mode::AskNew);
+        for (int i = 0; i < 25; i++) gh.step();
         click(gh, 130, 108);   // NO: the existing table is used
+        for (int i = 0; i < 25; i++) gh.step();
         CHECK(gh.mode() == Game::Mode::NameEntry);
         typeKeys(gh, "ANNA"); Event bs; bs.type = Event::Key; bs.key = kKeyBackspace; gh.event(bs); typeKeys(gh, "A1");
         Event en2; en2.type = Event::Key; en2.key = kKeyEnter; gh.event(en2);
@@ -378,15 +403,15 @@ int main(int argc, char** argv) {
         CHECK(found);
         // a score of 0 does not qualify: the table is shown without a name entry
         Game g4; CHECK(g4.init(adf, err, false)); g4.startLevel(1);
-        Event e4; e4.type = Event::Key; e4.key = kKeyEsc; g4.event(e4); click(g4, 95, 108); click(g4, 130, 108);
+        Event e4; e4.type = Event::Key; e4.key = kKeyEsc; g4.event(e4); askClick(g4, 95, 108); askClick(g4, 130, 108);
         CHECK(g4.mode() == Game::Mode::HighScores);
         // YES, YES: "INSERT FORMATTED DISK" - NO does nothing, YES creates a fresh table
         Game g5; CHECK(g5.init(adf, err, false)); g5.startLevel(1);
-        g5.event(e4); click(g5, 95, 108); click(g5, 95, 108);
+        g5.event(e4); askClick(g5, 95, 108); askClick(g5, 95, 108);
         CHECK(g5.mode() == Game::Mode::AskFormat);
-        click(g5, 130, 108); g5.event(e4); CHECK(g5.mode() == Game::Mode::AskFormat);
+        askClick(g5, 130, 108); g5.event(e4); CHECK(g5.mode() == Game::Mode::AskFormat);
         CHECK(!g5.takeScoresDirty());
-        click(g5, 95, 108);
+        askClick(g5, 95, 108);
         CHECK(g5.mode() == Game::Mode::HighScores && g5.takeScoresDirty());
         // the time running out ends the game like Esc (the bonus counter is lost)
         Game g6; CHECK(g6.init(adf, err, false)); g6.startLevel(1);
@@ -404,7 +429,7 @@ int main(int argc, char** argv) {
         Game g7; CHECK(g7.init(adf, err, false)); g7.startBonusStage(11);
         g7.event(e4); CHECK(g7.mode() == Game::Mode::AskDisk);
         for (int i = 0; i < 3; i++) g7.step();
-        click(g7, 130, 108); CHECK(g7.mode() == Game::Mode::HighScores);
+        askClick(g7, 130, 108); CHECK(g7.mode() == Game::Mode::HighScores);
     }
     {   // time out with at least 50 x stage points: "PLAY AGAIN FOR nnnn POINTS" (0x103c7e); YES pays and restarts the stage with bonus 0, NO -> score disk question
         for (int choice = 0; choice < 2; choice++) {
@@ -454,7 +479,7 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 130 * g2.stageTick() && g2.mode() == Game::Mode::Play; i++) g2.step();
         CHECK(g2.mode() == Game::Mode::AskDisk);   // first game end of the session: the score disk question
         for (int i = 0; i < 3; i++) g2.step();
-        click(g2, 130, 108);   // NO -> the table
+        askClick(g2, 130, 108);   // NO -> the table
         CHECK(g2.mode() == Game::Mode::HighScores);
         click(g2, 100, 100);
         for (int i = 0; i < 200 && g2.mode() == Game::Mode::HighScores; i++) g2.step();

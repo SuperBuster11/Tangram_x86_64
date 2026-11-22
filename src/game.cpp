@@ -1,4 +1,6 @@
 #include "game.hpp"
+
+#include <cstring>
 #include "hs_levelcover.hpp"
 #include <random>
 #include "password_label.hpp"
@@ -104,7 +106,7 @@ void Game::endGame(bool withScoreDisk) {
         playerScore_[player_] = score_;
         int first = -1;
         for (int p = 0; p < 2; p++)
-            if (HighScores::rankOf(table(), playerScore_[p]) >= 0) { if (first < 0) first = p; else pendingEntry_ = p; }
+            if (playerScore_[p] > table().back().score) { if (first < 0) first = p; else pendingEntry_ = p; }   // 0x1008d8: VAL(12th) < score (a tie with the 12th does not qualify here)
         if (first >= 0) { score_ = playerScore_[first]; entryRank_ = HighScores::rankOf(table(), score_); }
     } else if (withScoreDisk) {
         entryRank_ = HighScores::rankOf(table(), score_);
@@ -120,7 +122,8 @@ void Game::showNameEntryForTest(bool expert, int level, long score, const std::s
 
 void Game::startNewGame() {   // Novice: stage 1 or the stage of the typed password; Expert: a random stage of the 200
     int lv = typed_.empty() ? 1 : passwords_.levelFor(typed_);   // an invalid code starts at stage 1, like the original
-    if (lv >= int(levels_.size())) lv = 0;   // the original rejects the code of stage 200 (typing 95039 starts at stage 1; tested in the simulator, 75258 = stage 199 works)
+    if (lv >= int(levels_.size())) lv = 0;   // the original rejects the code of stage 200 (typing 95039 starts at stage 1; tested in the simulator, 75258 = stage 199 works;
+                                             // 0x101b04 searches only FOR i = 1 TO 995 STEP 5)
     if (expert_) lv = randomLevel();
     beyond_ = false; score_ = 0; playerScore_[0] = playerScore_[1] = 0; stagesDone_[0] = stagesDone_[1] = 0; bonusDue_ = false; bonusStages_[0] = bonusStages_[1] = 0; bonusUnits_ = 200; player_ = 0; startLevel(lv ? lv : 1); typed_.clear();
 }
@@ -137,7 +140,18 @@ void Game::gameOver(bool fromBonus) {
     // start-up); after that the answer given then is used again
     askFromBonus_ = fromBonus;
     if (askedDisk_) endGame(useDisk_);
-    else mode_ = Mode::AskDisk;
+    else { mode_ = Mode::AskDisk; askIn_ = 0; askOut_ = -1; }
+}
+
+void Game::askAnswered(int action) {   // done when the question has faded out
+    switch (action) {
+    case 1: mode_ = Mode::AskNew; askIn_ = 0; break;                                                     // PLAY WITH SCOREDISK: yes
+    case 2: askedDisk_ = true; useDisk_ = false; endGame(false); break;                                  // no
+    case 3: mode_ = Mode::AskFormat; askIn_ = 0; break;                                                  // CREATE NEW SCORE DISK: yes
+    case 4: askedDisk_ = true; useDisk_ = true; endGame(true); break;                                    // no
+    case 5: scores_ = defaults_; scoresDirty_ = true; askedDisk_ = true; useDisk_ = true; endGame(true); break;   // INSERT FORMATTED DISK: yes
+    default: break;
+    }
 }
 
 void Game::leaveTwoPlayer() {
@@ -321,11 +335,56 @@ void Game::audio(int16_t* out, int frames) {
         if (song_) music_[song_ - 1].stop();
         song_ = want; songGen_ = musicGen_;
         std::string err;
-        if (song_ && (!music_[song_ - 1].load(musicImage_[song_ - 1], err) || !music_[song_ - 1].start(err))) song_ = 0;   // reload = song from the start
+        wavPos_ = 0;
+        if (song_ && wav_[song_ - 1].empty() && (!music_[song_ - 1].load(musicImage_[song_ - 1], err) || !music_[song_ - 1].start(err))) song_ = 0;   // reload = song from the start
     }
     if (!song_) { std::fill(out, out + 2 * size_t(frames), int16_t(0)); return; }
+    if (!wav_[song_ - 1].empty()) {   // recording: 25% like the emulated song, from the start again at its end
+        const std::vector<int16_t>& w = wav_[song_ - 1];
+        const size_t n = w.size() / 2;
+        for (int i = 0; i < frames; i++) {
+            if (wavPos_ >= n) wavPos_ = 0;
+            out[2 * i] = int16_t(w[2 * wavPos_] / 4); out[2 * i + 1] = int16_t(w[2 * wavPos_ + 1] / 4);
+            wavPos_++;
+        }
+        return;
+    }
     music_[song_ - 1].setGain(0.25);
     music_[song_ - 1].render(out, frames);
+}
+
+bool Game::loadMusicWav(int song, const std::vector<uint8_t>& d, std::string& err) {
+    if (song < 1 || song > 2) { err = "song must be 1 or 2"; return false; }
+    auto u16 = [&](size_t o) { return unsigned(d[o]) | unsigned(d[o + 1]) << 8; };
+    auto u32 = [&](size_t o) { return uint32_t(u16(o)) | uint32_t(u16(o + 2)) << 16; };
+    if (d.size() < 12 || std::memcmp(d.data(), "RIFF", 4) || std::memcmp(d.data() + 8, "WAVE", 4)) { err = "not a WAV file"; return false; }
+    unsigned channels = 0, rate = 0, bits = 0, format = 0; size_t data = 0, dataLen = 0;
+    for (size_t o = 12; o + 8 <= d.size();) {
+        const uint32_t len = u32(o + 4);
+        if (!std::memcmp(d.data() + o, "fmt ", 4) && o + 24 <= d.size()) { format = u16(o + 8); channels = u16(o + 10); rate = u32(o + 12); bits = u16(o + 22); }
+        else if (!std::memcmp(d.data() + o, "data", 4)) { data = o + 8; dataLen = std::min<size_t>(len, d.size() - data); break; }
+        o += 8 + len + (len & 1);
+    }
+    if (format != 1 || bits != 16 || channels < 1 || channels > 2 || rate < 8000 || !data) { err = "WAV must be 16-bit PCM, mono or stereo"; return false; }
+    const size_t frames = dataLen / (2 * channels);
+    if (!frames) { err = "WAV has no sound"; return false; }
+    auto sample = [&](size_t f, unsigned c) { return int16_t(u16(data + (f * channels + std::min(c, channels - 1)) * 2)); };
+    std::vector<int16_t> out;
+    if (rate == 44100) {
+        out.resize(frames * 2);
+        for (size_t f = 0; f < frames; f++) { out[2 * f] = sample(f, 0); out[2 * f + 1] = sample(f, 1); }
+    } else {   // linear resampling to 44100 Hz
+        const size_t n = size_t(double(frames) * 44100.0 / rate);
+        out.resize(n * 2);
+        for (size_t i = 0; i < n; i++) {
+            const double t = double(i) * rate / 44100.0; const size_t f = std::min(frames - 1, size_t(t)), g = std::min(frames - 1, f + 1);
+            const double a = t - double(f);
+            for (unsigned c = 0; c < 2; c++) out[2 * i + c] = int16_t(std::lround(sample(f, c) * (1 - a) + sample(g, c) * a));
+        }
+    }
+    wav_[song - 1] = std::move(out);
+    musicGen_++;   // a song that is playing starts again from the recording
+    return true;
 }
 
 void Game::event(const Event& e) {
@@ -401,17 +460,20 @@ void Game::event(const Event& e) {
         }
         break;
     case Mode::AskDisk: case Mode::AskNew: case Mode::AskFormat: {
-        auto hit = [&](TextPos p, int rec) { return e.x >= p.x && e.x < p.x + pics_[size_t(rec)].w && e.y >= p.y && e.y < p.y + pics_[size_t(rec)].h; };
-        if (e.type == Event::Down && e.button == 0) {
-            bool yes = hit(kYesPos, kDatYes), no = hit(kNoPos, kDatNo);
-            if (mode_ == Mode::AskDisk) { if (yes) mode_ = Mode::AskNew; else if (no) { askedDisk_ = true; useDisk_ = false; endGame(false); } }
-            else if (mode_ == Mode::AskNew) { if (yes) mode_ = Mode::AskFormat; else if (no) { askedDisk_ = true; useDisk_ = true; endGame(true); } }
-            else if (yes) { scores_ = defaults_; scoresDirty_ = true; askedDisk_ = true; useDisk_ = true; endGame(true); }   // a fresh score disk; NO does nothing
+        // 0x106b70: left button with the pointer in y 106..113, x 86..110 = YES, x 118..142 = NO (not during the fades)
+        if (e.type == Event::Down && e.button == 0 && askIn_ >= kFadeFrames && askOut_ < 0 && e.y > 105 && e.y < 114) {
+            const bool yes = e.x > 85 && e.x < 111, no = e.x > 117 && e.x < 143;
+            int action = 0;
+            if (mode_ == Mode::AskDisk) action = yes ? 1 : no ? 2 : 0;
+            else if (mode_ == Mode::AskNew) action = yes ? 3 : no ? 4 : 0;
+            else action = yes ? 5 : no ? 6 : 0;   // INSERT FORMATTED DISK: NO only asks again (fades out and in)
+            if (action) { askAction_ = action; askOut_ = 0; }
         }
         break;   // Esc / Return do nothing here in the original
     }
     case Mode::HighScores:
-        if ((e.type == Event::Down && e.button == 0) || (e.type == Event::Key && (e.key == kKeyEnter || e.key == kKeyEsc))) leaveScores();
+        // 0x103c02: Return (INKEY$ = CHR$(13)) or any mouse button (MOUSEK); Esc does nothing here
+        if (e.type == Event::Down || (e.type == Event::Key && e.key == kKeyEnter)) leaveScores();
         break;
     case Mode::NameEntry:
         if (e.type != Event::Key || hsLeave_ >= 0) break;
@@ -419,7 +481,7 @@ void Game::event(const Event& e) {
             auto& t = table();
             HighScores::insert(t, entryName_, score_, level_);
             scoresDirty_ = true;
-            if (pendingEntry_ >= 0 && HighScores::rankOf(t, playerScore_[pendingEntry_]) >= 0) {   // the second player's turn: the screen starts again
+            if (pendingEntry_ >= 0 && playerScore_[pendingEntry_] > t.back().score) {   // the second player's turn: the screen starts again
                 score_ = playerScore_[pendingEntry_]; pendingEntry_ = -1;
                 entryName_.clear(); entryRank_ = HighScores::rankOf(t, score_); hsFrame_ = 0;
             } else {
@@ -464,6 +526,13 @@ void Game::step() {
             if (score_ >= 2 * startBonus(level_)) { mode_ = Mode::AskReplay; panelFx_ = 0; }
             else if (twoPlayers_) { pendingContinue_ = true; gameOver(false); }   // 0x1040ee: the table for the player who drops out, then the other one goes on
             else gameOver(false);
+        }
+    }
+    if (mode_ == Mode::AskDisk || mode_ == Mode::AskNew || mode_ == Mode::AskFormat) {
+        if (askIn_ < kFadeFrames) askIn_++;
+        if (askOut_ >= 0 && ++askOut_ >= kFadeFrames) {
+            askOut_ = -1;
+            if (askAction_ == 6) askIn_ = 0; else askAnswered(askAction_);
         }
     }
     if (mode_ == Mode::HighScores || mode_ == Mode::NameEntry) {
@@ -642,7 +711,8 @@ void Game::drawHighScores() {
 void Game::drawPanelOverlay() {
     if (mode_ == Mode::AskDisk || mode_ == Mode::AskNew || mode_ == Mode::AskFormat) {
         blitPicture(frame_, pics_[84], kPausePanel.x, kPausePanel.y, play_, false);   // pasted with minterm $C0 (plain copy): colour 0 = black, that is the shadow
-        text(pics_[kFontUi], 38, 93, mode_ == Mode::AskDisk ? "PLAY WITH SCOREDISK" : mode_ == Mode::AskNew ? "CREATE NEW SCORE DISK" : "INSERT FORMATTED DISK", play_);
+        // 0x1063d8 / 0x106402 / 0x10643a: x 38 for the 19-character question, x 30 for the two 21-character ones
+        text(pics_[kFontUi], mode_ == Mode::AskDisk ? 38 : 30, 93, mode_ == Mode::AskDisk ? "PLAY WITH SCOREDISK" : mode_ == Mode::AskNew ? "CREATE NEW SCORE DISK" : "INSERT FORMATTED DISK", play_);
         for (int rec : {kDatYes, kDatNo}) {   // the YES / NO button pictures are drawn opaque
             const DatPicture& b = pics_[size_t(rec)]; TextPos pos = rec == kDatYes ? kYesPos : kNoPos;
             for (int gy = 0; gy < b.h; gy++)
@@ -681,9 +751,17 @@ void Game::drawPanelOverlay() {
 }
 
 void Game::render() {
-    auto fade = [&](int num, int den) {   // brightness num/den of the palette
+    // Fades of the original (0x1048cc out, 0x104a74 in): 15 steps, each takes 1 from every 4-bit colour component (clamped at 0),
+    // so all components drop by the same amount and dark colours reach black first. num/den = how far the fade has come back to full.
+    auto fade = [&](int num, int den) {
         if (num >= den) return;
-        for (Rgb& c : frame_.rgb) { c.r = uint8_t(c.r * num / den); c.g = uint8_t(c.g * num / den); c.b = uint8_t(c.b * num / den); }
+        const int sub = 15 - (15 * std::max(0, num) + den / 2) / den;   // 15 = black, 0 = full palette
+        auto f = [sub](uint8_t v) { const int c = (v + 8) / 17 - sub; return uint8_t(c > 0 ? c * 17 : 0); };
+        for (Rgb& c : frame_.rgb) { c.r = f(c.r); c.g = f(c.g); c.b = f(c.b); }
+    };
+    auto askFade = [&] {   // scoredisk questions: fade in, and fade out after the answer
+        if (askOut_ >= 0) fade(kFadeFrames - askOut_, kFadeFrames);
+        else if (askIn_ < kFadeFrames) fade(askIn_, kFadeFrames);
     };
     if (mode_ == Mode::Intro) {
         const int len = 2 * kFadeFrames + kIntroHold[introStage_];
@@ -785,6 +863,7 @@ void Game::render() {
         }
         if (askMode) drawPanelOverlay();
         blitPicture(frame_, pics_[kDatCursor], mx_ + kCursorOffset.x, my_ + kCursorOffset.y, play_);
+        if (askMode) { askFade(); return; }
         if (bonusPhase_ == 3) fade(kFadeFrames - bonusEnd_, kFadeFrames);
         else if (fadeIn_ < kFadeFrames) fade(fadeIn_, kFadeFrames);
         return;
@@ -909,6 +988,7 @@ void Game::render() {
     if (mode_ == Mode::Play && toFrame_ >= timeoutBlank()) { fade(0, 1); return; }   // blank frame before the question
     if (mode_ != Mode::Password && !(mode_ == Mode::Play && holding_ && !paused_))   // hidden from the end of the stage until the next one; 0x102872: a piece in hand replaces the pointer
         blitPicture(frame_, pics_[kDatCursor], mx_ + kCursorOffset.x, my_ + kCursorOffset.y, play_);
+    if (mode_ == Mode::AskDisk || mode_ == Mode::AskNew || mode_ == Mode::AskFormat) askFade();
 }
 
 }  // namespace tg

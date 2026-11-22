@@ -49,6 +49,12 @@ Odtworzenie wkompilowanych danych: `pack_assets disk.adf src/embedded_assets.cpp
   - *wyłączony* – ostre piksele.
   Filtr liczy obraz od razu w docelowym rozmiarze (także przy skali niecałkowitej w pełnym ekranie), bez późniejszego rozciągania.
 
+## Muzyka z nagrań
+Pliki `music1.wav` (utwór 1, od startu gry) i `music2.wav` (utwór 2, etapy bonusowe) zastępują emulowane utwory. Gra szuka ich
+obok pliku exe (albo w bieżącym folderze); bez nich gra emulowany odtwarzacz z oryginału. Najprościej włożyć je do folderu
+`assets/` – przy kompilacji CMake kopiuje je obok exe. Wymagany WAV 16-bit PCM (mono lub stereo, dowolna częstotliwość);
+nagranie gra od początku, gdy utwór się zaczyna (start, M, F2, bonus), po końcu znów od początku, z tą samą głośnością (25%).
+
 ## Stan
 Gra jest kompletna i porównywana z oryginałem (zrzuty z WinUAE, analiza kodu 68000): intro, menu, 200 etapów z hasłami,
 układanie i obracanie klocków, sprawdzanie ułożenia jak w oryginale, punktacja, tryby Novice/Expert, tryb dla dwóch graczy

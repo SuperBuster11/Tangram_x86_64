@@ -179,6 +179,20 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR cmd, int show) {
     if (path.empty()) tg::loadEmbeddedAssets(adf); else loaded = adf.loadFile(path, err);
     if (!loaded || !g_game.init(adf, err)) { MessageBoxA(nullptr, err.c_str(), kTitle, MB_ICONERROR); return 1; }
     { std::ifstream in("tangram.sco", std::ios::binary); if (in) g_game.loadScores(tg::Bytes(std::istreambuf_iterator<char>(in), {})); }
+    {   // music1.wav / music2.wav next to the exe (or in the current folder) replace the emulated songs
+        char exe[MAX_PATH] = {}; GetModuleFileNameA(nullptr, exe, MAX_PATH);
+        std::string dir = exe; dir = dir.substr(0, dir.find_last_of("\\/") + 1);
+        for (int song = 1; song <= 2; song++) {
+            const std::string name = "music" + std::to_string(song) + ".wav";
+            for (const std::string& path : {dir + name, name}) {
+                std::ifstream in(path, std::ios::binary);
+                if (!in) continue;
+                std::string werr;
+                if (!g_game.loadMusicWav(song, std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {}), werr)) MessageBoxA(nullptr, (path + ": " + werr).c_str(), kTitle, MB_ICONWARNING);
+                break;
+            }
+        }
+    }
     WNDCLASSA wc = {}; wc.lpfnWndProc = proc; wc.hInstance = inst; wc.lpszClassName = "TangramWnd"; wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIconA(inst, MAKEINTRESOURCEA(1));   // icon from assets/tangram.rc
     RegisterClassA(&wc);

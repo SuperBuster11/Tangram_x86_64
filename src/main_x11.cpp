@@ -16,7 +16,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include "embedded_assets.hpp"
@@ -42,6 +44,20 @@ int main(int argc, char** argv) {
     if (!game.init(adf, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
     const char* scorePath = "tangram.sco";   // the "scoredisk": high-score table kept in the current directory
     { std::ifstream in(scorePath, std::ios::binary); if (in) game.loadScores(tg::Bytes(std::istreambuf_iterator<char>(in), {})); }
+    {   // music1.wav / music2.wav next to the program (or in the current folder) replace the emulated songs
+        char exe[4096] = {}; const ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+        std::string dir = n > 0 ? std::string(exe, size_t(n)) : std::string(); dir = dir.substr(0, dir.find_last_of('/') + 1);
+        for (int song = 1; song <= 2; song++) {
+            const std::string name = "music" + std::to_string(song) + ".wav";
+            for (const std::string& path : {dir + name, name}) {
+                std::ifstream in(path, std::ios::binary);
+                if (!in) continue;
+                std::string werr;
+                if (!game.loadMusicWav(song, std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {}), werr)) std::fprintf(stderr, "%s: %s\n", path.c_str(), werr.c_str());
+                break;
+            }
+        }
+    }
 
     Display* dpy = XOpenDisplay(nullptr);
     if (!dpy) { std::fprintf(stderr, "cannot open X display\n"); return 1; }

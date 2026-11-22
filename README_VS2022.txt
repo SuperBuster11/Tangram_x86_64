@@ -37,3 +37,8 @@ Na Linuksie: cmake + make tangram_x11, ./tangram_x11 [--scale 4].
 - F11 / Alt+Enter: pełny ekran (okno bez ramki na cały monitor, obraz 16:10 liczony filtrem od razu w docelowym rozmiarze, czarne pasy); jeśli 1280x800 nie mieści się na ekranie, gra startuje w pełnym ekranie. Sprawdzone przez użytkownika na Windows – działa.
 - F8: filtr obrazu cyklicznie – monitor 1084S (domyślny) -> CRT -> wygładzony -> wyłączony.
 - Ikona: assets/tangram.ico + assets/tangram.rc (wbudowane w exe). Na Linuksie ikona okna X11 z src/icon_data.hpp (_NET_WM_ICON).
+
+--- Muzyka z plików WAV ---
+Włóż music1.wav (utwór 1) i music2.wav (utwór 2, bonus) do folderu assets\ przed kompilacją – CMake skopiuje je obok
+Tangram_x64.exe / Tangram_x86.exe. Można je też położyć ręcznie obok exe. Bez nich gra emulowaną muzykę z oryginału.
+Uwaga: po dodaniu plików trzeba raz odświeżyć konfigurację CMake (Projekt -> Konfiguruj pamięć podręczną), żeby kopiowanie się włączyło.

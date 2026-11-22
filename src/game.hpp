@@ -39,6 +39,11 @@ public:
     void scaleFrame(uint32_t* dst, int w, int h, ScaleFilter mode) const { tg::scaleFrame(frame_, dst, w, h, mode); }   // any size (fullscreen)
     // Renders `frames` stereo frames (interleaved int16, 44100 Hz) of the current music: song 1 (continuously). Call from the audio thread/loop of the window layer; the game itself never needs it.
     void audio(int16_t* out, int frames);
+    // Replaces song 1 or 2 by a recording (RIFF WAV, 16-bit PCM, mono or stereo, any rate; converted to 44100 Hz stereo). The recording
+    // is played from its start whenever the emulated song would start, and repeats from the start at its end; volume as the
+    // emulated song (25%). Without a recording the original music player is emulated. Returns false (and leaves the song) on a bad file.
+    bool loadMusicWav(int song, const std::vector<uint8_t>& wav, std::string& err);
+    bool musicFromWav(int song) const { return song >= 1 && song <= 2 && !wav_[song - 1].empty(); }
     int song() const { return song_; }
     bool musicMuted() const { return !musicOn_; }       // M (during a stage): song stopped; M again: started from the beginning
     int musicSong() const { return songSel_; }          // song chosen with F2 (1 at start-up; the original never changes it by itself)
@@ -111,6 +116,8 @@ private:
     Music music_[2];
     std::vector<uint8_t> musicImage_[2];
     int song_ = 0, songSel_ = 1, musicGen_ = 0, songGen_ = 0;
+    std::vector<int16_t> wav_[2];   // recordings replacing the songs (interleaved stereo, 44100 Hz)
+    size_t wavPos_ = 0;             // next frame of the playing recording
     bool musicOn_ = true;
     bool muted_ = false, quit_ = false, scoresDirty_ = false;
     // End of a game (Esc during a stage or the bonus stage, or the time running out): "PLAY WITH SCOREDISK" (YES / NO, no way back).
@@ -123,6 +130,9 @@ private:
     Image hsPic_; Palette hsPal_;
     int hsFrame_ = 0, entryRank_ = -1, hsLeave_ = -1;
     bool timedOut_ = false, askFromBonus_ = false;
+    // 0x106a30: each scoredisk question fades in (0x104a74) and, once answered, fades out (0x1048cc) before what follows
+    int askIn_ = 1 << 20, askOut_ = -1, askAction_ = 0;   // frames since the question appeared / since it was answered
+    void askAnswered(int action);
     int stageTick_ = 76, expertX_ = 0;   // frames per clock tick of the current stage; Expert speed-up (never reset during a session)
     bool tablePeriodOnce_ = false;
     static constexpr int kPauseFxFrames = 46;   // pause panel blended in / out (effect 10 of the original)
