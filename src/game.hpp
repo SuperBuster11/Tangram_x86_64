@@ -205,6 +205,17 @@ private:
     // then the password panel appears through vertical blinds (slat widths below, 6 frames each), then waits for a click and
     // closes the same way while the next stage shows through.
     int pwFrame_ = 0, closeFrame_ = -1, nextLevel_ = 1;
+    // 0x1007e8: the next stage replaces the whole screen with one of the 11 effects of 0x10d074 (chosen at random, RND(11)+1) at
+    // delay 5000; closeFrame_ counts its frames (Novice after the click on the password panel), the wipe of Expert / two players too
+    int transFx_ = 1;
+public:
+    static int transitionFrames(int fx);                        // length of effect fx (1..11) in 50 Hz frames
+    static bool transitionShowsNew(int fx, int x, int y, int frame);   // pixel (x,y) already shows the new picture at that frame
+    int transitionEffect() const { return transFx_; }
+    void setTransitionEffectForTest(int fx) { transFx_ = fx; forcedFx_ = fx; }
+private:
+    int forcedFx_ = 0;
+    void pickTransition() { transFx_ = forcedFx_ ? forcedFx_ : 1 + int(rng_() % 11); }
     static constexpr int kXWipeStart = 225, kXWipeFrames = 300, kXWipeX0 = 22;   // Expert wipe (measured): starts 225 frames after the last piece, 300 frames long
     static constexpr int kStripY0 = 62, kStripY1 = 143;   // rows covered by the blinds (measured)
     static constexpr int kPwCount = 156, kPwOpenStart = 162, kPwOpenSteps = 8, kPwCloseSteps = 8;

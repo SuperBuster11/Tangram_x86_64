@@ -13,7 +13,7 @@ Muzyka jest odtwarzana przez wbudowany interpreter procesora 68000 i emulację u
 | Odłożenie klocka | puść lewy przycisk nad figurą (poza figurą klocek wraca na tackę) |
 | Obrót klocka | prawy przycisk podczas trzymania; przytrzymany obraca dalej (po ok. 0,25 s, potem co 6 klatek) |
 | Pauza / koniec gry (pytanie o scoredisk, potem tabela wyników; także w etapie bonusowym) / wyjście z gry | spacja lub P / Esc lub E (jak w oryginale) w grze / Esc w menu |
-| Po ukończeniu etapu | klik lub Enter na ekranie z hasłem |
+| Po ukończeniu etapu | klik lub dowolny klawisz na ekranie z hasłem; następny etap pojawia się jednym z 11 losowych efektów (jak w oryginale) |
 | Muzyka | M – wyłącz / włącz (25%); F2 – zmiana utworu (cyklicznie) |
 | Rozmiar okna | F5 – kolejno 1280×800, 1600×1000… do największego, który mieści się na ekranie, potem znowu 1280×800 |
 | Pełny ekran | F11 albo Alt+Enter – włącza/wyłącza; obraz 16:10 tak duży, jak pozwala monitor, z czarnymi pasami po bokach lub u góry i dołu |

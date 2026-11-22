@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
         CHECK(g3.mode() == Game::Mode::Password && g3.passwordShown() == "95039");
         for (int i = 0; i < 400; i++) g3.step();
         g3.event(en2);
-        for (int i = 0; i < 6 * 8 + 2; i++) g3.step();
+        for (int i = 0; i < 400 && g3.mode() == Game::Mode::Password; i++) g3.step();   // the next stage comes in with one of the 11 effects
         CHECK(g3.mode() == Game::Mode::Play && g3.level() == 200);
         for (int i = 0; i < 100; i++) g3.step();
         play(g3, dir + "/level200_solution.txt");
@@ -213,7 +213,7 @@ int main(int argc, char** argv) {
         double minStage = 1;
         for (int i = 0; i < 400; i++) { gf.step(); minStage = std::min(minStage, bright(gf)); }
         gf.event(enf);
-        for (int i = 0; i < 6 * 8 + 2; i++) { gf.step(); minStage = std::min(minStage, bright(gf)); }
+        for (int i = 0; i < 400 && gf.mode() == Game::Mode::Password; i++) { gf.step(); minStage = std::min(minStage, bright(gf)); }
         CHECK(gf.mode() == Game::Mode::Play && gf.level() == 2 && minStage > 0.6 * playB);   // no fade from stage to stage
         Game gb2; CHECK(gb2.init(adf, err, false));   // stage 10 -> bonus stage: fade out, fade in
         typeKeys(gb2, "07274"); gb2.event(enf); settle(gb2);
@@ -229,7 +229,7 @@ int main(int argc, char** argv) {
         play(gx2, dir + "/level199_solution.txt");
         for (int i = 0; i < 400; i++) gx2.step();
         gx2.event(enf);
-        for (int i = 0; i < 6 * 8 + 2; i++) gx2.step();
+        for (int i = 0; i < 400 && gx2.mode() == Game::Mode::Password; i++) gx2.step();   // the next stage comes in with one of the 11 effects
         play(gx2, dir + "/level200_solution.txt");
         double min200 = 1; for (int i = 0; i < 260; i++) { gx2.step(); min200 = std::min(min200, bright(gx2)); }
         CHECK(gx2.mode() == Game::Mode::Play && gx2.expertMode() && min200 < 0.05);
@@ -266,7 +266,7 @@ int main(int argc, char** argv) {
     }
     g.event(en);
     CHECK(g.mode() == Game::Mode::Password && g.closeFrame() == 0);
-    for (int i = 0; i < 6 * 8 + 2; i++) g.step();
+    for (int i = 0; i < 400 && g.mode() == Game::Mode::Password; i++) g.step();   // the next stage comes in with one of the 11 effects
     CHECK(g.mode() == Game::Mode::Play && g.level() == 2);
     // password entry: level 10 and its stored solution
     Event esc; esc.type = Event::Key; esc.key = kKeyEsc; g.event(esc);
@@ -304,7 +304,7 @@ int main(int argc, char** argv) {
         play(gn, dir + "/level10_solution.txt");
         for (int i = 0; i < 400; i++) gn.step();
         gn.event(en);
-        for (int i = 0; i < 6 * 8 + 2; i++) gn.step();
+        for (int i = 0; i < 400 && gn.mode() == Game::Mode::Password; i++) gn.step();   // the next stage comes in with one of the 11 effects
         CHECK(gn.mode() == Game::Mode::Play && gn.level() == 11);
     }
     typeKeys(g, "07274"); g.event(en); settle(g);
@@ -315,7 +315,7 @@ int main(int argc, char** argv) {
     CHECK(g.passwordShown() == "37322");
     for (int i = 0; i < 400; i++) g.step();
     g.event(en);
-    for (int i = 0; i < 6 * 8 + 2; i++) g.step();
+    for (int i = 0; i < 400 && g.mode() == Game::Mode::Password; i++) g.step();   // the next stage comes in with one of the 11 effects
     CHECK(g.mode() == Game::Mode::Bonus);   // every 10th completed stage is followed by the bonus stage
     for (int i = 0; i < 5400; i++) g.step();   // time runs out (101 ticks of 51 frames) -> level 11
     // wrong placement is not accepted: level 11, one piece only
@@ -582,6 +582,17 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 30; i++) gr.step();
         CHECK(gr.heldRotation() == 3);
     }
+    {   // 0x10d074 effects 1..11 (the next stage over the whole screen): nothing new at the start, everything new at the end, half way a mix
+        for (int fx = 1; fx <= 11; fx++) {
+            const int n = Game::transitionFrames(fx);
+            int at0 = 0, half = 0, end = 0;
+            for (int y = 0; y < 200; y++) for (int x = 0; x < 320; x++) {
+                at0 += Game::transitionShowsNew(fx, x, y, -1); half += Game::transitionShowsNew(fx, x, y, n / 2); end += Game::transitionShowsNew(fx, x, y, n);
+            }
+            std::printf("effect %d: %d frames, half way %.0f%% new\n", fx, n, half / 640.0);
+            CHECK(at0 == 0 && end == 64000 && half > 64000 / 5 && half < 64000 * 4 / 5);
+        }
+    }
     {   // 0x101d78: a tray piece is picked up inside its area where the pixel is grey (colours 20..24) or black (0), e.g. the lower tip of
         // the diamond (y 87) and the bottom corner of the parallelogram (296,147); the parchment around the pieces does nothing
         Game gp; CHECK(gp.init(adf, err, false)); gp.startLevel(1);
@@ -610,6 +621,7 @@ int main(int argc, char** argv) {
         play(gx, dir + "/level1_solution.txt");
         CHECK(gx.mode() == Game::Mode::Password);
         gx.setNextLevelForTest(172);
+        gx.setTransitionEffectForTest(5);   // the real run showed effect 5 (columns from the left)
         Event enx; enx.type = Event::Key; enx.key = kKeyEnter; gx.event(enx);   // clicks and keys do nothing here
         {   // the panel refill against real frames (shots 8 frames apart in the original): piece counts, time bar, time and stage label
             const struct { const char* file; int pw; } shots[] = {{"screen_beyond200_i24.rgb", 249}, {"screen_beyond200_i30.rgb", 297}, {"screen_beyond200_i36.rgb", 345}};
@@ -623,14 +635,22 @@ int main(int argc, char** argv) {
                 CHECK(bad <= 60);
             }
         }
+        // the effect against two simulator frames, in a second game (the refill shots above went past these moments)
+        Game gw; CHECK(gw.init(adf, err, false));
+        click(gw, 245, 100); click(gw, 100, 120);
+        gw.startLevel(1);
+        play(gw, dir + "/level1_solution.txt");
+        gw.setNextLevelForTest(172); gw.setTransitionEffectForTest(5);
         int at = 0;
         for (const char* file : {"screen_expert_wipe100.rgb", "screen_expert_wipe244.rgb"}) {
             int want = at ? 244 : 100;
-            while (gx.transitionFrame() < 225 + want) gx.step();
+            // the frames came from the simulator, whose CPU is slower: same column reached (x = 22 + 7/15 px per simulator frame)
+            const int col = 22 + want * 7 / 15;
+            while (!Game::transitionShowsNew(5, col, 100, gw.transitionFrame() - 225)) gw.step();
             at = 1;
             auto shot = slurp(dir + "/" + file); int tot = 0, same = 0;
             for (int y = 0; y < 200; y++) for (int x = 12; x < 218; x++) { size_t k = size_t(y * 320 + x); tot++;
-                same += gx.frame().rgb[k] == Rgb{uint8_t(shot[k * 3]), uint8_t(shot[k * 3 + 1]), uint8_t(shot[k * 3 + 2])}; }
+                same += gw.frame().rgb[k] == Rgb{uint8_t(shot[k * 3]), uint8_t(shot[k * 3 + 1]), uint8_t(shot[k * 3 + 2])}; }
             std::printf("expert wipe t=%d: figure area %.2f%% identical\n", want, 100.0 * same / tot);
             CHECK(100.0 * same / tot > 96.0);
         }
@@ -647,7 +667,7 @@ int main(int argc, char** argv) {
         int p1 = g2p.score(); CHECK(p1 > 0);
         for (int i = 0; i < 400; i++) g2p.step();
         Event en3; en3.type = Event::Key; en3.key = kKeyEnter; g2p.event(en3);
-        for (int i = 0; i < 6 * 8 + 2; i++) g2p.step();
+        for (int i = 0; i < 400 && g2p.mode() == Game::Mode::Password; i++) g2p.step();   // the next stage comes in with one of the 11 effects
         CHECK(g2p.mode() == Game::Mode::Play && g2p.level() == 2 && g2p.player() == 2 && g2p.score() == 0 && g2p.scoreOf(1) == p1);
         Game& g2r = g2p;   // player 2 is on stage 2 (solution found from the user's screenshot); the score of player 1 is kept
         CHECK(g2r.scoreOf(1) == p1);
@@ -656,7 +676,7 @@ int main(int argc, char** argv) {
         const int p2 = g2r.score(); CHECK(p2 > 0 && g2r.scoreOf(1) == p1);
         for (int i = 0; i < 400; i++) g2r.step();
         g2r.event(en3);
-        for (int i = 0; i < 6 * 8 + 2; i++) g2r.step();
+        for (int i = 0; i < 400 && g2r.mode() == Game::Mode::Password; i++) g2r.step();   // the next stage comes in with one of the 11 effects
         // back to player 1 on stage 3: his score continues, the score of player 2 is kept
         CHECK(g2r.mode() == Game::Mode::Play && g2r.level() == 3 && g2r.player() == 1 && g2r.score() == p1 && g2r.scoreOf(2) == p2);
         {   // stage 10 as laid by the user (one piece a pixel off, ~1.1% uncovered): must be accepted
@@ -676,7 +696,7 @@ int main(int argc, char** argv) {
         play(g2q, dir + "/level10_solution.txt");
         for (int i = 0; i < 400; i++) g2q.step();
         g2q.event(en3);
-        for (int i = 0; i < 6 * 8 + 2; i++) g2q.step();
+        for (int i = 0; i < 400 && g2q.mode() == Game::Mode::Password; i++) g2q.step();   // the next stage comes in with one of the 11 effects
         CHECK(g2q.mode() == Game::Mode::Play && g2q.level() == 11 && g2q.player() == 2);
     }
     {   // name entry on the table, against the real game (table A with the last entry lowered to 20, table B to 0 so that a score qualifies)

@@ -505,7 +505,7 @@ void Game::event(const Event& e) {
         if ((e.type == Event::Down || e.type == Event::Key) &&   // 0x104320: any mouse button or any key closes the password panel
             !wipeMode() && closeFrame_ < 0 && toBonusFade_ < 0 && pwFrame_ >= kPwOpenStart + 6 * kPwOpenSteps) {
             if (bonusDue_ && level_ < int(levels_.size())) toBonusFade_ = 0;   // the bonus stage follows: fade to black first
-            else closeFrame_ = 0;
+            else { closeFrame_ = 0; pickTransition(); }
         }   // the panel is rolled up; the next stage appears through the closing blinds
         break;
     }
@@ -578,10 +578,11 @@ void Game::step() {
     } else if (mode_ == Mode::Password && beyond_) {   // stage 200 solved: the count-down, then fade to black and Expert begins
         if (++pwFrame_ >= kPwCount + kFadeFrames) { beyond_ = false; expert_ = true; tablePeriodOnce_ = true; nextStage(); fadeIn_ = 0; }
     } else if (mode_ == Mode::Password && wipeMode()) {   // Expert: no password panel and no click; after a hold the next random stage is wiped in from the left
-        if (++pwFrame_ >= kXWipeStart + kXWipeFrames) nextStage();
+        if (pwFrame_ == kXWipeStart - 1) pickTransition();
+        if (++pwFrame_ >= kXWipeStart + transitionFrames(transFx_)) nextStage();
     } else if (mode_ == Mode::Password) {
         if (closeFrame_ >= 0) {
-            if (++closeFrame_ >= 6 * kPwCloseSteps) {
+            if (++closeFrame_ >= transitionFrames(transFx_)) {
                 closeFrame_ = -1;
                 if (level_ >= int(levels_.size())) { askFromBonus_ = false; endGame(true); }
                 else if (bonusDue_) startBonusStage(level_ + 1);
@@ -637,6 +638,44 @@ void Game::drawPiece(PieceType t, int rot, int inst, int x, int y) {
 }
 
 // Vertical blinds: slats repeat every 16 columns; a slat of (even) width w is centred on column boundary b (+16k).
+// The screen effects of 0x10d074 (modes 1..11), timed with a 68000 cycle count at 7.09 MHz (141800 cycles per frame) for the delay
+// 5000 used between stages: the busy loop (dbf, 10 cycles) = 0.353 frames per step, copying a row of 5 planes = 0.033, a pixel column
+// of 5 planes = 0.61 (0.47 with a pattern), a whole-screen pass of modes 10/11 = 5.5 (this model gives the 46 frames measured for
+// the pause panel, effect 10 at delay 500). The "new" picture is copied over the old one:
+//   1 rows 0..199 with a 4-pixel checkerboard ($F0F0, inverted every row), then rows 199..0 with the rest   2 rows top to bottom
+//   3 rows from the top and the bottom to the middle   4 rows bottom to top   5 columns left to right   6 right to left
+//   7 columns from both sides to the middle   8 rows from the top with $F0F0 and at the same time from the bottom with $0F0F
+//   9 columns from the left on odd rows and from the right on even rows   10 each 16-pixel column opens from its middle (8 passes)
+//   11 in each 32 pixels two columns per pass move in from the edges (even rows) or out from the middle (odd rows), 16 passes
+static double transitionTime(int fx, int x, int y) {
+    const bool inF0 = ((x & 15) >> 2) % 2 == 0;   // pixel set in the pattern $F0F0
+    switch (fx) {
+    case 1: return (inF0 == (y % 2 == 0) ? y : 200 + 199 - y) * 0.386;
+    case 2: return y * 0.386;
+    case 3: return std::min(y, 199 - y) * 0.419;
+    case 4: return (199 - y) * 0.386;
+    case 5: return x * 0.786;
+    case 6: return (319 - x) * 0.786;
+    case 7: return std::min(x, 319 - x) * 1.396;
+    case 8: return (inF0 ? y : 199 - y) * 0.419;
+    case 9: return (y % 2 ? x : 319 - x) * 1.116;
+    case 10: { const int c = x & 15; return (c <= 7 ? 7 - c : c - 8) * 5.88 + y * 5.53 / 200; }
+    default: { const int p = x & 31; const int pass = y % 2 == 0 ? (p < 16 ? p : 31 - p) : (p < 16 ? 15 - p : p - 16); return pass * 5.93 + y * 5.57 / 200; }
+    }
+}
+int Game::transitionFrames(int fx) {
+    static const double kStep[12] = {0, 0.386, 0.386, 0.419, 0.386, 0.786, 0.786, 1.396, 0.419, 1.116, 5.88, 5.93};
+    static int cache[12] = {};
+    fx = std::max(1, std::min(11, fx));
+    if (!cache[fx]) {
+        double t = 0;
+        for (int y = 0; y < 200; y++) for (int x = 0; x < 320; x++) t = std::max(t, transitionTime(fx, x, y));
+        cache[fx] = int(std::ceil(t + kStep[fx]));
+    }
+    return cache[fx];
+}
+bool Game::transitionShowsNew(int fx, int x, int y, int frame) { return transitionTime(fx, x, y) <= frame; }
+
 static bool slatVisible(int x, int b, int w) {
     if (w >= 16) return true;
     int rr = ((x - b + 8) % 16 + 16) % 16 - 8;   // -8..7
@@ -929,9 +968,9 @@ void Game::render() {
                     previewPlayer_ = -1;
                     level_ = sl; frames_ = sf; holding_ = sh; mode_ = sm;
                     std::swap(sp, placed_); std::swap(si, inst_);
-                    int front = kXWipeX0 + (pwFrame_ - kXWipeStart) * 7 / 15;
-                    for (int y = 0; y < 200; y++)
-                        for (int x = std::max(12, front); x < 218; x++) { size_t i = size_t(y) * 320 + x; frame_.index[i] = oldScene.index[i]; frame_.rgb[i] = oldScene.rgb[i]; }
+                    for (int y = 0; y < 200; y++)   // the effect copies the new screen over the old one
+                        for (int x = 0; x < 320; x++)
+                            if (!transitionShowsNew(transFx_, x, y, pwFrame_ - kXWipeStart)) { size_t i = size_t(y) * 320 + x; frame_.index[i] = oldScene.index[i]; frame_.rgb[i] = oldScene.rgb[i]; }
                 }
             }
         } else if (pwFrame_ < kPwCount) { drawScene(); }
@@ -971,10 +1010,9 @@ void Game::render() {
                     level_ = sl; frames_ = sf; holding_ = sh; mode_ = sm;
                     std::swap(sp, placed_); std::swap(si, inst_);
                 }
-                int w = kCloseWidths[std::min(kPwCloseSteps - 1, closeFrame_ / 6)];
-                for (int y = kStripY0; y <= kStripY1; y++)
-                    for (int x = 12; x < 218; x++)
-                        if (slatVisible(x, 16, w)) { size_t i = size_t(y) * 320 + x; frame_.index[i] = old.index[i]; frame_.rgb[i] = old.rgb[i]; }
+                for (int y = 0; y < 200; y++)   // the effect copies the new screen over the panel scene
+                    for (int x = 0; x < 320; x++)
+                        if (!transitionShowsNew(transFx_, x, y, closeFrame_)) { size_t i = size_t(y) * 320 + x; frame_.index[i] = old.index[i]; frame_.rgb[i] = old.rgb[i]; }
             }
         }
     } else if ((mode_ == Mode::AskReplay || mode_ == Mode::Play) && panelFx_ >= 0) {
